@@ -1,5 +1,5 @@
 {
-	"name": "app2",
+	"name": "w2g",
 	"version": "1.0.0",
 	"description": "",
 	"license": "ISC",
@@ -21,7 +21,7 @@
 		"dotenv": "^16.5.0"
 	},
 	"build": {
-		"appId": "com.yourcompany.w2g",
+		"appId": "com.turkuazz.w2g",
 		"productName": "TURKUAZZ",
 		"linux": {
 			"target": ["AppImage"],
