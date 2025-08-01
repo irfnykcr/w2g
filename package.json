@@ -27,14 +27,22 @@
 			"target": ["AppImage"],
 			"category": "Utility"
 		},
+		"win": {
+			"target": ["nsis"],
+			"icon": "winicon.png"
+		},
 		"files": [
 			"**/*",
 			"!test_server/**/*"
 		],
 		"extraResources": [
 			{
-			"from": ".env",
-			"to": ".env"
+				"from": "resources/config",
+				"to": "config"
+			},
+			{
+				"from": "test_server/server.py",
+				"to": "test_server/server.py"
 			}
 		]
 	}

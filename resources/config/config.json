@@ -1,0 +1,7 @@
+{
+	"USERID": "0",
+	"VLC_PORT": "8093",
+	"SERVER_ENDPOINT": "http://127.0.0.1:5000",
+	"VLC_PATH": "/usr/bin/vlc",
+	"VLC_HTTP_PASS": "w1Vam0l3chtgrRWP"
+}

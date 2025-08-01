@@ -1,25 +1,33 @@
 const { app, BrowserWindow, ipcMain } = require('electron/main')
 const axios = require('axios')
 const path = require('node:path')
-const dotenv = require('dotenv')
+// const dotenv = require('dotenv')
 const { spawn } = require('child_process')
 const fs = require('fs')
 
-const isPrimeTakenPath = path.join(__dirname, 'is_primetaken.pid')
-let USERID = "0"
-let VLC_PORT = 8093
-if (fs.existsSync(isPrimeTakenPath)) {
-	console.log('THIS IS THE SECOND')
-	USERID = "1"
-	VLC_PORT = 8094
-} else {
-	fs.writeFileSync(isPrimeTakenPath, '')
-	console.log('Created file: is_primetaken')
+
+const isDev = !app.isPackaged;
+const __apppath = isDev ? __dirname : process.resourcesPath;
+console.log("******APPPATH:", __apppath);
+const appConfigPath = path.join(__apppath, 'config/config.json');
+
+let appConfig = {}
+if (!fs.existsSync(appConfigPath)) {
+	console.log("config not found")
+	exit()
 }
 
-const ENDPOINT = "http://127.0.0.1:5000"
-const VLC_PATH = '/usr/bin/vlc'
-const VLC_HTTP_PASS = 'w1Vam0l3chtgrRWP'
+const configData = fs.readFileSync(appConfigPath, 'utf-8')
+appConfig = JSON.parse(configData)
+console.log('Loaded app config:', appConfig)
+
+
+let USERID = appConfig.USERID
+let VLC_PORT = appConfig.VLC_PORT
+
+const SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
+const VLC_PATH = appConfig.VLC_PATH
+const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
 const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`]
 	
 let mainWindow
@@ -47,7 +55,7 @@ const makeRequest_server = async (url, json) => {
 	if (!json) json = {}
 	json.userid = USERID
 	return await axios.post(
-		`${ENDPOINT}/${url}`,
+		`${SERVER_ENDPOINT}/${url}`,
 		json
 	).then(async (r)=>{
 		return r.data.data
@@ -63,10 +71,6 @@ const getInfo = async () => {
 }
 
 const abortVLC = () => {
-	if (USERID === "0"){
-		fs.unlinkSync(isPrimeTakenPath)
-		console.log('Removed file: is_primetaken')
-	}
 	if (proc_vlc){
 		proc_vlc.kill("SIGKILL")
 		console.log(`Killed VLC process: ${proc_vlc.pid}`)
