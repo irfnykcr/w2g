@@ -17,18 +17,21 @@
 		"electron-builder": "^26.0.12"
 	},
 	"dependencies": {
-		"axios": "^1.9.0",
-		"dotenv": "^16.5.0"
+		"axios": "^1.9.0"
 	},
 	"build": {
 		"appId": "com.turkuazz.w2g",
 		"productName": "TURKUAZZ",
 		"linux": {
-			"target": ["AppImage"],
+			"target": [
+				"AppImage"
+			],
 			"category": "Utility"
 		},
 		"win": {
-			"target": ["nsis"],
+			"target": [
+				"nsis"
+			],
 			"icon": "winicon.png"
 		},
 		"files": [

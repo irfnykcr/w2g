@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron/main')
 const axios = require('axios')
 const path = require('node:path')
-// const dotenv = require('dotenv')
 const { spawn } = require('child_process')
 const fs = require('fs')
 
@@ -9,12 +8,12 @@ const fs = require('fs')
 const isDev = !app.isPackaged;
 const __apppath = isDev ? __dirname : process.resourcesPath;
 console.log("******APPPATH:", __apppath);
-const appConfigPath = path.join(__apppath, 'config/config.json');
+const appConfigPath = isDev ? path.join(__apppath, 'resources/config/config.json') : path.join(__apppath, 'config/config.json');
 
 let appConfig = {}
 if (!fs.existsSync(appConfigPath)) {
 	console.log("config not found")
-	exit()
+	process.exit()
 }
 
 const configData = fs.readFileSync(appConfigPath, 'utf-8')
@@ -28,7 +27,7 @@ let VLC_PORT = appConfig.VLC_PORT
 const SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
 const VLC_PATH = appConfig.VLC_PATH
 const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
-const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`]
+const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`, `--video-on-top`]
 	
 let mainWindow
 let proc_vlc
@@ -38,8 +37,8 @@ let serverInterval
 
 const createWindow = () => {
 	const win = new BrowserWindow({
-		width: 640,
-		height: 640,
+		width: 1280,
+		height: 720,
 		webPreferences: {
 			contextIsolation: true,
 			preload: path.join(__dirname, 'preload.js')
