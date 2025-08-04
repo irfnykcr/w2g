@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TURKUAZZ W2G</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../assets/css/style.css">
     <script>
         tailwind.config = {
             theme: {
@@ -20,6 +21,14 @@
         }
     </script>
 </head>
+<script>
+    (async () => {
+        await window.electronAPI.getUser().then((r) => {
+            console.log("username:", r)
+            localStorage.setItem("user", r)
+        })
+    })()
+</script>
 <body class="bg-dark-bg text-white min-h-screen flex flex-col overflow-hidden">
     <!-- dynamic header -->
     <header class="bg-dark-bg border-b border-gray-700 px-6 py-4 flex-shrink-0"></header>
@@ -31,12 +40,18 @@
             <div id="url-content" class="p-6 flex flex-col flex-1 transition-opacity duration-300">
                 <h2 class="text-2xl font-bold text-turkuazz mb-4">watch video</h2>
                 <div class="flex flex-col gap-4">
-                    <input
-                        type="url"
-                        placeholder="Enter video URL (e.g., YouTube, Vimeo)"
-                        class="w-full p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
-                    />
-                    <button id="set-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors">
+                    <div class="flex items-center gap-2">
+                        <input
+                            id="urlof-thevideo"
+                            type="text"
+                            placeholder="Enter video URL"
+                            class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
+                        />
+                        <button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-6 rounded-md hover:bg-opacity-90 transition-colors min-w-[120px]">
+                            set video
+                        </button>
+                    </div>
+                    <button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors">
                         watch video
                     </button>
                 </div>
@@ -46,26 +61,22 @@
         <!-- chat section -->
         <section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative transition-all duration-300 ease-in-out flex flex-col overflow-hidden">
             <button id="toggle-chat-section" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl font-bold z-10">&times;</button>
-            <div id="chat-content" class="p-6 flex flex-col flex-1 transition-opacity duration-300">
+            <div  class="p-6 flex flex-col flex-1 transition-opacity duration-300">
                 <h2 class="text-2xl font-bold text-turkuazz mb-4">Chat</h2>
-                <div class="flex-1 bg-dark-bg rounded-md p-4 overflow-y-auto border border-gray-700 mb-4 flex flex-col gap-2">
-                    <div class="text-gray-300">
-                        <span class="font-semibold text-turkuazz">User1:</span> hey
-                    </div>
-                    <div class="text-gray-300">
-                        <span class="font-semibold text-turkuazz">User2:</span> hello
-                    </div>
+                <div id="chat-content" class="max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
+                    <!-- dynamic -->
                 </div>
-                <div class="flex gap-2">
-                    <input
-                        type="text"
-                        placeholder="Type your message..."
-                        class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
-                    />
-                    <button class="bg-turkuazz text-dark-bg font-bold py-3 px-6 rounded-md hover:bg-opacity-90 transition-colors">
-                        send
-                    </button>
-                </div>
+            </div>
+            <div class="flex gap-2 m-2">
+                <input
+                    id="input-chatmessage"
+                    type="text"
+                    placeholder="Type your message..."
+                    class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
+                />
+                <button id="send-chatmessage" class="bg-turkuazz text-dark-bg font-bold py-3 px-6 rounded-md hover:bg-opacity-90 transition-colors">
+                    send
+                </button>
             </div>
         </section>
     </main>
@@ -73,5 +84,6 @@
     
     <script src="../assets/js/headers/header.js" defer></script>
     <script src="../assets/js/index.js" defer></script>
+    <script type="module" src="../assets/js/wss.js" defer></script>
 </body>
 </html>

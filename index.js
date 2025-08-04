@@ -3,8 +3,14 @@ const axios = require('axios')
 const path = require('node:path')
 const { spawn } = require('child_process')
 const fs = require('fs')
+const { remote } = require('electron');
+const { Menu } = require('electron');
+// const bcrypt = require('bcryptjs')
 
-
+const ROOMPSW = "password_room1_password"
+// console.log(bcrypt.hashSync(ROOMPSW, 10))
+// process.exit()
+const ROOMNAME = "room1"
 const isDev = !app.isPackaged;
 const __apppath = isDev ? __dirname : process.resourcesPath;
 console.log("******APPPATH:", __apppath);
@@ -22,12 +28,16 @@ console.log('Loaded app config:', appConfig)
 
 
 let USERID = appConfig.USERID
+ipcMain.handle('get-user', (event) => {
+	return USERID
+})
 let VLC_PORT = appConfig.VLC_PORT
 
 const SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
 const VLC_PATH = appConfig.VLC_PATH
 const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
-const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`, `--video-on-top`]
+// const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`, `--video-on-top`]
+const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`]
 	
 let mainWindow
 let proc_vlc
@@ -44,7 +54,16 @@ const createWindow = () => {
 			preload: path.join(__dirname, 'preload.js')
 		}
 	})
-	
+	win.webContents.on('context-menu', (event, params) => {
+		const menu = Menu.buildFromTemplate([
+			{ role: 'cut' },
+			{ role: 'copy' },
+			{ role: 'paste' },
+			{ type: 'separator' },
+			{ role: 'selectall' }
+		]);
+		menu.popup({ window: win });
+	});
 	mainWindow = win
 	win.loadFile(path.join(__dirname, 'views/index.html'))
 	win.webContents.openDevTools()
@@ -53,12 +72,15 @@ const createWindow = () => {
 const makeRequest_server = async (url, json) => {
 	if (!json) json = {}
 	json.userid = USERID
-	return await axios.post(
+	json.roompsw = ROOMPSW
+	json.roomname = ROOMNAME
+	const r = await axios.post(
 		`${SERVER_ENDPOINT}/${url}`,
 		json
 	).then(async (r)=>{
 		return r.data.data
 	})
+	return r 
 }
 
 const getInfo = async () => {
@@ -67,6 +89,14 @@ const getInfo = async () => {
 		null,
 		{ auth: { username: '', password: VLC_HTTP_PASS } }
 	)
+}
+const getVideoUrl_VLC = async ()=>{
+	const r = await axios.post(
+		`http://127.0.0.1:${VLC_PORT}/requests/playlist.json`,
+		null,
+		{ auth: { username: '', password: VLC_HTTP_PASS } }
+	)
+	return r.data.children[0].children.find(item => item.current === "current").uri
 }
 
 const abortVLC = () => {
@@ -88,14 +118,22 @@ const abortVLC = () => {
 
 const setVideo = async (url) => {
 	return await axios.post(
-		`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=in_play&input=${url}`,
+		`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=in_play&input=${encodeURIComponent(url)}`,
 		null,
 		{ auth: { username: '', password: VLC_HTTP_PASS } }
 	)
 }
-ipcMain.handle('setvideo-vlc', async (event, url) => {
-	return await setVideo(url)
-})
+ipcMain.handle('setvideo-vlc', async (_, url) => {
+	try {
+		if (typeof url !== 'string' || !url.trim()) {
+			throw new Error('Invalid URL provided');
+		}
+		await setVideo(url)
+		return true
+	} catch (error) {
+		return false
+	}
+});
 
 const setTime = async (time) => {
 	return await axios.post(
@@ -104,9 +142,9 @@ const setTime = async (time) => {
 		{ auth: { username: '', password: VLC_HTTP_PASS } }
 	)
 }
-ipcMain.handle('settime-vlc', async (event, time) => {
-	return await setTime(time)
-})
+// ipcMain.handle('settime-vlc', async (event, time) => {
+// 	return await setTime(time)
+// })
 
 const setPlaying = async (is_playing) => {
 	let command = ""
@@ -121,16 +159,16 @@ const setPlaying = async (is_playing) => {
 		{ auth: { username: '', password: VLC_HTTP_PASS } }
 	)
 }
-ipcMain.handle('setplaying-vlc', async (event, is_playing) => {
-	return await setPlaying(is_playing)
-})
+// ipcMain.handle('setplaying-vlc', async (event, is_playing) => {
+// 	return await setPlaying(is_playing)
+// })
 
 ipcMain.handle('open-vlc', async (event) => {
 	return await new Promise(async (resolve, reject) => {
 		await makeRequest_server("/join")
 		const r = await makeRequest_server("/get_playerstatus")
-		CURRENT_VIDEO = r.url.value
-		VLC_ARGS.push('--start-time', `${r.time.value}`, CURRENT_VIDEO)
+		let CURRENT_VIDEO_SERVER = r.url.value
+		VLC_ARGS.push('--start-time', `${r.time.value}`, CURRENT_VIDEO_SERVER)
 
 		proc_vlc = spawn(VLC_PATH, VLC_ARGS)
 
@@ -140,16 +178,17 @@ ipcMain.handle('open-vlc', async (event) => {
 
 			let currentState = undefined
 			let currentTime = undefined
+			let currentVideo = undefined
 			let lastSentTime = undefined
 			let stateVLC = undefined
 			let timeVLC = 0
+			let videoVLC = undefined
 			let isplayingVLC = undefined
 			let updateTimeout = Date.now()
 
 			while (true){
 				try{
 					const r = await getInfo().then((r)=>{return r.data})
-					console.log(r)
 					if (r.length !== -1){
 						break
 					}
@@ -161,13 +200,12 @@ ipcMain.handle('open-vlc', async (event) => {
 				setTimeout(() => {}, 100)
 				try {
 					const r = await getInfo().then((r)=>{return r.data})
-					// mainWindow.webContents.send('vlc-status', r.data)
 					stateVLC = r.state
-					if (currentState === undefined){
-						currentState = stateVLC
-					} else if (stateVLC === "stopped"){
-						console.log("stopped..")
+					if (stateVLC == "stopped"){
+						// console.log("stopped..")
 						continue
+					}else if (currentState === undefined){
+						currentState = stateVLC
 					}
 					timeVLC = Math.floor(parseFloat(r.length) * parseFloat(r.position))
 					if (currentTime === undefined || lastSentTime === undefined){
@@ -175,18 +213,22 @@ ipcMain.handle('open-vlc', async (event) => {
 						lastSentTime = timeVLC
 					}
 					isplayingVLC = stateVLC != "paused"
+					videoVLC = await getVideoUrl_VLC()
+					if (currentVideo === undefined) {
+						currentVideo = videoVLC
+					}
+
 
 					if (Date.now() - updateTimeout > 900) {
 						updateTimeout = Date.now()
 						const r = await makeRequest_server("/get_playerstatus")
-						// mainWindow.webContents.send('server-status', r.data.data)
 						const isplayingServer = r.is_playing
-						const time = r.time
+						const timeServer = r.time
+						const urlServer = r.url
 						const me = r.users.value[USERID]
 						if (!me.uptodate){
 							console.log("not up to date!!!")
-							const timeABSserver = Math.abs(time.value - timeVLC)
-							const url = r.url
+							const timeABSserver = Math.abs(timeServer.value - timeVLC)
 							if (isplayingServer.user != USERID && isplayingServer.value != isplayingVLC){
 								await setPlaying(isplayingServer.value)
 								if (isplayingServer.value === "paused"){
@@ -196,14 +238,15 @@ ipcMain.handle('open-vlc', async (event) => {
 								}
 								console.log(`set_playing ${isplayingVLC}, ${isplayingServer.value}`)
 							}
-							if (time.user != USERID && timeABSserver > 5) {
-								await setTime(time.value)
-								currentTime = time.value
-								lastSentTime = time.value
-								console.log(`set_time ${timeABSserver} ${timeVLC} ${time.value}`)
+							if (timeServer.user != USERID && timeABSserver > 5) {
+								await setTime(timeServer.value)
+								currentTime = timeServer.value
+								lastSentTime = timeServer.value
+								console.log(`set_time ${timeABSserver} ${timeVLC} ${timeServer.value}`)
 							}
-							if (url.user != USERID && url.value != CURRENT_VIDEO) {
-								await setVideo(url.value)
+							if (urlServer.user != USERID && urlServer.value != videoVLC) {
+								await setVideo(urlServer.value)
+								currentVideo = urlServer.value
 								console.log("!!!!!setvideo")
 							}
 							await makeRequest_server("/imuptodate")
@@ -211,7 +254,10 @@ ipcMain.handle('open-vlc', async (event) => {
 							continue
 						} else {
 							// console.log("checks for up to date regular!!!")
-							if (isplayingVLC != isplayingServer.value) {
+							if (videoVLC != urlServer.value){
+								console.log(`video changed!!regularr ${videoVLC} ${urlServer.value}`)
+								await makeRequest_server("/update_url", {"new_url":videoVLC})
+							}else if (isplayingVLC != isplayingServer.value) {
 								await makeRequest_server("/update_isplaying", {"is_playing": isplayingVLC, "new_time": timeVLC})
 								console.log(`state regular update ${isplayingVLC} ${isplayingServer.value}`)
 							} else if (timeVLC != 0 && Math.abs(lastSentTime - timeVLC) > 5){
@@ -232,13 +278,24 @@ ipcMain.handle('open-vlc', async (event) => {
 						await makeRequest_server("/update_time", {"new_time":timeVLC})
 					}
 
+					if (videoVLC != currentVideo) {
+						console.log(`video changed!! ${videoVLC} ${currentVideo}`)
+						await makeRequest_server("/update_url", {"new_url":videoVLC})
+					}
+
 					currentState = stateVLC
+					currentVideo = videoVLC
 					if (currentState != "ended") {
 						currentTime = timeVLC
 					}
 				} catch (err) {
-					// console.log(err)
-					console.log("some errorrrrrr!!!")
+					if (err.message.includes("connect ECONNREFUSED")) {
+						console.log("connection error with vlc: connect ECONNREFUSED")
+					}else if (err.message.includes("socket hang up")){
+						console.log("connection error with socket: socket hang up")
+					}else {
+						console.log(err)
+					}
 					break
 				}
 			}

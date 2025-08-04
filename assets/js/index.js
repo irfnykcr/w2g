@@ -8,12 +8,22 @@ window.electronAPI.onServerStatus((data) => {
 
 
 document.addEventListener("DOMContentLoaded", () => {
+	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
-	setthevideo.addEventListener("click", async () => {
+	const playthevideo = document.querySelector("#play-thevideo")
+	playthevideo.addEventListener("click", async () => {
 		await window.electronAPI.openVLC()
 	})
+	setthevideo.addEventListener("click", async () => {
+		const videoUrlValue = videourl.value.trim();
+		if (videoUrlValue) {
+			await window.electronAPI.setVideoVLC(videoUrlValue)
+		} else {
+			console.error("Video URL is empty or invalid.")
+		}
+	})
 
-	const main = document.querySelector("main")
+	// const main = document.querySelector("main")
 	const urlSection = document.getElementById("url-section")
 	const chatSection = document.getElementById("chat-section")
 	const urlToggleButton = document.getElementById("toggle-url-section")
