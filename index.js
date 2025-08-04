@@ -8,9 +8,19 @@ const { Menu } = require('electron');
 // const bcrypt = require('bcryptjs')
 
 const ROOMPSW = "password_room1_password"
+ipcMain.handle('get-roompsw', (event) => {
+	return ROOMPSW
+})
+const USERPSW = "123"
+ipcMain.handle('get-userpsw', (event) => {
+	return USERPSW
+})
 // console.log(bcrypt.hashSync(ROOMPSW, 10))
 // process.exit()
 const ROOMNAME = "room1"
+ipcMain.handle('get-room', (event) => {
+	return ROOMNAME
+})
 const isDev = !app.isPackaged;
 const __apppath = isDev ? __dirname : process.resourcesPath;
 console.log("******APPPATH:", __apppath);
@@ -31,9 +41,12 @@ let USERID = appConfig.USERID
 ipcMain.handle('get-user', (event) => {
 	return USERID
 })
-let VLC_PORT = appConfig.VLC_PORT
-
 const SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
+ipcMain.handle('get-serverendpoint', (event) => {
+	return SERVER_ENDPOINT
+})
+
+let VLC_PORT = appConfig.VLC_PORT
 const VLC_PATH = appConfig.VLC_PATH
 const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
 // const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`, `--video-on-top`]
@@ -75,7 +88,7 @@ const makeRequest_server = async (url, json) => {
 	json.roompsw = ROOMPSW
 	json.roomname = ROOMNAME
 	const r = await axios.post(
-		`${SERVER_ENDPOINT}/${url}`,
+		`https://${SERVER_ENDPOINT}/${url}`,
 		json
 	).then(async (r)=>{
 		return r.data.data
@@ -185,6 +198,8 @@ ipcMain.handle('open-vlc', async (event) => {
 			let videoVLC = undefined
 			let isplayingVLC = undefined
 			let updateTimeout = Date.now()
+
+			setTimeout(() => {}, 250)
 
 			while (true){
 				try{
