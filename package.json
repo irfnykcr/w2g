@@ -43,10 +43,6 @@
 			{
 				"from": "resources/config",
 				"to": "config"
-			},
-			{
-				"from": "test_server/server.py",
-				"to": "test_server/server.py"
 			}
 		]
 	}

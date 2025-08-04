@@ -1,26 +1,3 @@
-
-(async () => {
-	await window.electronAPI.getUser().then((r) => {
-		console.log("username:", r)
-		localStorage.setItem("user", r)
-	})
-	await window.electronAPI.getUserPsw().then((r) => {
-		console.log("userpsw:", r)
-		localStorage.setItem("userpsw", r)
-	})
-	await window.electronAPI.getRoom().then((r) => {
-		console.log("room:", r)
-		localStorage.setItem("room", r)
-	})
-	await window.electronAPI.getRoomPsw().then((r) => {
-		console.log("roompsw:", r)
-		localStorage.setItem("roompsw", r)
-	})
-	await window.electronAPI.getServerEndpoint().then((r) => {
-		console.log("server_endpoint:", r)
-		localStorage.setItem("server_endpoint", r)
-	})
-})()
 tailwind.config = {
 	theme: {
 		extend: {

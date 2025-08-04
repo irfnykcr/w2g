@@ -60,14 +60,15 @@ class ChatApp:
 
 	async def handle_disconnect(self, websocket: WebSocket):
 		room = self.get_room_from_websocket(websocket)
+		user = self.get_user_from_websocket(websocket)
+
 		if room is None or room not in ROOMS:
 			print("WebSocket not associated with any room.")
 			return
-		ROOMS[room]["users"] = [user_data for user_data in ROOMS[room]["users"] if user_data["websocket"] != websocket]
-
-		user = self.get_user_from_websocket(websocket)
 		if user:
 			await self.send_message_to_room(room, f"{user} left.", no_history=True)
+
+		ROOMS[room]["users"] = [user_data for user_data in ROOMS[room]["users"] if user_data["websocket"] != websocket]
 
 	async def handle_message(self, websocket: WebSocket, data):
 		message = data.get("message")
@@ -115,17 +116,14 @@ class ChatApp:
 			if not no_history:
 				ROOMS[room]["history"].append(data)
 
-			disconnected_websockets = []
 			for user_data in ROOMS[room]["users"]:
 				websocket = user_data["websocket"]
 				try:
 					await websocket.send_text(dumps(data))
 				except Exception as e:
 					print(f"Error sending message to {user_data['username']}: {e}")
-					disconnected_websockets.append(websocket)
-
-			for websocket in disconnected_websockets:
-				await self.handle_disconnect(websocket)
+			# maybe disconnect unavailable users?
+					
 
 
 chat = ChatApp()

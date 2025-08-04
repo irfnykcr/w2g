@@ -1,10 +1,12 @@
-const SERVER_ENDPOINT = localStorage.getItem("server_endpoint")
-const USER = localStorage.getItem("user")
-const USER_PSW = localStorage.getItem("userpsw")
-const ROOM = localStorage.getItem("room")
-const ROOM_PSW = localStorage.getItem("roompsw")
 
-document.addEventListener("DOMContentLoaded", () => {
+
+document.addEventListener("DOMContentLoaded", async () => {
+	const SERVER_ENDPOINT = await window.electronAPI.getServerEndpoint()
+	const USER = await window.electronAPI.getUser()
+	const USER_PSW = await window.electronAPI.getUserPsw()
+	const ROOM = await window.electronAPI.getRoom()
+	const ROOM_PSW = await window.electronAPI.getRoomPsw()
+	
 	const joinquery = new URLSearchParams({
 		user: USER,
 		psw: USER_PSW,
