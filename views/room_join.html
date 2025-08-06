@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<script>
+	let ROOM_ID
+	let ROOM_PSW
+	const checkRoom = async (roomid, roompsw) => {
+		return await window.electronAPI.setRoomCreds(roomid, roompsw).then(async (r) => {
+			if (r) {
+				await window.electronAPI.gotoIndex()
+				return true
+			}
+			console.log("login failed.")
+			return false
+		})
+	}
+	(async () => {
+		await window.electronAPI.getRoom().then((r) => {
+			if (r === false) { 
+				console.log("there is no room.")
+				return 
+			}
+			console.log("there is room.", r)
+			ROOM_ID = r.room
+			ROOM_PSW = r.psw
+		})
+		console.log(ROOM_ID,ROOM_PSW)
+		if (ROOM_ID && ROOM_PSW) {
+			console.log("trying:", ROOM_ID, ROOM_PSW)
+			await checkRoom(ROOM_ID, ROOM_PSW)
+		}
+	})()
+</script>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Join</title>
+	<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-dark-bg text-white h-screen flex flex-col overflow-hidden">
+	<header class="bg-dark-bg border-b border-gray-700 px-4 sm:px-6 py-4 flex-shrink-0">
+		<div id="logout"></div>
+	</header>
+
+	<div class="bg-dark-card p-6 rounded-lg shadow-md w-80 mx-auto my-auto">
+		<h2 class="text-2xl font-bold mb-6 text-center text-turkuazz">Join</h2>
+		<div>
+			<div class="mb-4">
+				<label for="roomid" class="block mb-2 font-semibold text-turkuazz">Room join id</label>
+				<input type="text" id="roomid" name="roomid" required class="w-full p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
+			</div>
+			<div class="mb-4">
+				<label for="password" class="block mb-2 font-semibold text-turkuazz">Password</label>
+				<input type="password" id="password" name="password" required class="w-full p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
+			</div>
+			<button id="send-join" type="button" class="w-full p-2 bg-turkuazz text-dark-bg rounded-md hover:bg-dark-turkuazz">Join</button>
+		</div>
+	</div>
+</body>
+<script src="../assets/js/headers/header.js" defer></script>
+<script>
+	document.addEventListener("DOMContentLoaded", async () => {
+		const sendJoin = document.querySelector("#send-join")
+		const roomid = document.querySelector("#roomid")
+		const password = document.querySelector("#password")
+
+		sendJoin.addEventListener("click", async () => {
+			if (roomid.value) {
+				await checkRoom(roomid.value, password.value)
+			}
+		})
+
+		roomid.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && roomid.value) {
+				await checkRoom(roomid.value, password.value)
+			}
+		})
+
+		password.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && roomid.value) {
+				await checkRoom(roomid.value, password.value)
+			}
+		})
+	})
+</script>
+</html>

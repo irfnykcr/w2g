@@ -3,28 +3,18 @@ const axios = require('axios')
 const path = require('node:path')
 const { spawn } = require('child_process')
 const fs = require('fs')
-const { remote } = require('electron');
-const { Menu } = require('electron');
+const keytar = require('keytar')
+const { Menu } = require('electron')
 // const bcrypt = require('bcryptjs')
-
-const ROOMPSW = "password_room1_password"
-ipcMain.handle('get-roompsw', (event) => {
-	return ROOMPSW
-})
-const USERPSW = "123"
-ipcMain.handle('get-userpsw', (event) => {
-	return USERPSW
-})
-// console.log(bcrypt.hashSync(ROOMPSW, 10))
+// console.log(bcrypt.hashSync("123", 10))
 // process.exit()
-const ROOMNAME = "room1"
-ipcMain.handle('get-room', (event) => {
-	return ROOMNAME
-})
-const isDev = !app.isPackaged;
-const __apppath = isDev ? __dirname : process.resourcesPath;
-console.log("******APPPATH:", __apppath);
-const appConfigPath = isDev ? path.join(__apppath, 'resources/config/config.json') : path.join(__apppath, 'config/config.json');
+
+
+
+const isDev = !app.isPackaged
+const __apppath = isDev ? __dirname : process.resourcesPath
+console.log("----APPPATH:", __apppath)
+const appConfigPath = isDev ? path.join(__apppath, 'resources/config/config.json') : path.join(__apppath, 'config/config.json')
 
 let appConfig = {}
 if (!fs.existsSync(appConfigPath)) {
@@ -36,22 +26,150 @@ const configData = fs.readFileSync(appConfigPath, 'utf-8')
 appConfig = JSON.parse(configData)
 console.log('Loaded app config:', appConfig)
 
-
-let USERID = appConfig.USERID
-ipcMain.handle('get-user', (event) => {
-	return USERID
-})
 const SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
 ipcMain.handle('get-serverendpoint', (event) => {
 	return SERVER_ENDPOINT
 })
 
 let VLC_PORT = appConfig.VLC_PORT
-const VLC_PATH = appConfig.VLC_PATH
+let VLC_PATH
+if (appConfig.VLC_FINDER) {
+	let possiblePaths = []
+	if (process.platform === 'win32') {
+		possiblePaths = [
+			'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe',
+			'C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe',
+			'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\VideoLAN\\VLC\\vlc.exe',
+		]
+	} else if (process.platform === 'linux') {
+		possiblePaths = [
+			'/usr/bin/vlc',
+			'/usr/local/bin/vlc',
+			'/snap/bin/vlc',
+		]
+	} else {
+		VLC_PATH = appConfig.VLC_PATH
+		console.log("----VLC PATH from APPCONFIG:", VLC_PATH)
+	}
+	for (const vlcPath of possiblePaths) {
+		if (fs.existsSync(vlcPath)) {
+			VLC_PATH = vlcPath
+			console.log("----VLC PATH from AUTOFIND:", VLC_PATH)
+			break
+		}
+	}
+}else {
+	VLC_PATH = appConfig.VLC_PATH
+	console.log("----VLC PATH from APPCONFIG:", VLC_PATH)
+}
 const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
-// const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`, `--video-on-top`]
-const VLC_ARGS = [`--intf`, `qt`, `--extraintf`, `http`, `--http-port`, `${VLC_PORT}`, `--http-password`, `${VLC_HTTP_PASS}`]
-	
+
+
+let ROOMID
+let USERID
+
+const checkRoom = async (room, roompsw)=>{
+	return await axios.post(
+		`https://${SERVER_ENDPOINT}/login_room`,
+		{
+			room: room,
+			psw: roompsw
+		}
+	).then(async (r)=>{
+		return r.data.status
+	})
+}
+ipcMain.handle('check-room', async (event, room, roompsw) => {
+	return checkRoom(room, roompsw)
+})
+
+ipcMain.handle('get-room', async (event) => {
+	if (!ROOMID){
+		try{
+			ROOMID = await keytar.getPassword("turkuazz", "roomid")
+			if (ROOMID === null) {return false}
+		} catch {
+			return false
+		}
+	}
+	try{
+		_roompsw = await keytar.getPassword("turkuazz", "roompsw")
+		if (_roompsw === null) {return false}
+	} catch {
+		return false
+	}
+	return {
+		room: ROOMID,
+		psw: _roompsw
+	}
+})
+ipcMain.handle('set-roomcreds', async (event, roomid, roompsw) => {
+	if (!await checkRoom(roomid, roompsw)) { return false }
+	ROOMID = roomid
+	await keytar.setPassword('turkuazz', "roomid", roomid)
+	await keytar.setPassword('turkuazz', "roompsw", roompsw)
+	return true
+})
+ipcMain.handle('left-room', async (event) => {
+	await keytar.deletePassword('turkuazz', "roomid")
+	await keytar.deletePassword('turkuazz', "roompsw")
+	return true
+})
+
+const checkUser = async (user, userpsw)=>{
+	return await axios.post(
+		`https://${SERVER_ENDPOINT}/login_user`,
+		{
+			user: user,
+			psw: userpsw
+		}
+	).then(async (r)=>{
+		return r.data.status
+	})
+}
+ipcMain.handle('check-user', async (event, user, userpsw) => {
+	return checkUser(user, userpsw)
+})
+
+ipcMain.handle('get-user', async (event) => {
+	if (!USERID){
+		try{
+			USERID = await keytar.getPassword("turkuazz", "user")
+			if (USERID === null) {return false}
+		} catch {
+			return false
+		}
+	}
+	try{
+		_userpsw = await keytar.getPassword("turkuazz", "userpsw")
+		if (_userpsw === null) {return false}
+	} catch {
+		return false
+	}
+	return {
+		user: USERID,
+		psw: _userpsw
+	}
+})
+ipcMain.handle('set-usercreds', async (event, user, userpsw) => {
+	if (!await checkUser(user, userpsw)) { return false }
+	USERID = user
+	await keytar.setPassword("turkuazz", "user", user)
+	await keytar.setPassword("turkuazz", "userpsw", userpsw)
+	return true
+})
+ipcMain.handle('logout-user', async (event) => {
+	USERID = null
+	ROOMID = null
+	await keytar.deletePassword('turkuazz', "roomid")
+	await keytar.deletePassword('turkuazz', "roompsw")
+	await keytar.deletePassword('turkuazz', "user")
+	await keytar.deletePassword('turkuazz', "userpsw")
+	return true
+})
+
+
+
 let mainWindow
 let proc_vlc
 
@@ -74,21 +192,35 @@ const createWindow = () => {
 			{ role: 'paste' },
 			{ type: 'separator' },
 			{ role: 'selectall' }
-		]);
-		menu.popup({ window: win });
-	});
+		])
+		menu.popup({ window: win })
+	})
 	mainWindow = win
-	win.loadFile(path.join(__dirname, 'views/index.html'))
+	win.loadFile(path.join(__dirname, 'views/login.html'))
+	// win.loadFile(path.join(__dirname, 'views/index.html'))
 	win.webContents.openDevTools()
 }
+ipcMain.on('goto-room_join', () => {
+	mainWindow.loadFile('views/room_join.html')
+})
+ipcMain.on('goto-index', () => {
+	mainWindow.loadFile('views/index.html')
+})
+ipcMain.on('goto-login', () => {
+	mainWindow.loadFile('views/login.html')
+})
 
 const makeRequest_server = async (url, json) => {
 	if (!json) json = {}
+	if (!USERID || !ROOMID) {
+		return {status: false, message:`useridid, roomid, ${USERID}, ${ROOMID}`}
+	}
 	json.userid = USERID
-	json.roompsw = ROOMPSW
-	json.roomname = ROOMNAME
+	json.userpsw = await keytar.getPassword("turkuazz_user", USERID)
+	json.roomid = ROOMID
+	json.roompsw = await keytar.getPassword("turkuazz_room", ROOMID)
 	const r = await axios.post(
-		`https://${SERVER_ENDPOINT}/${url}`,
+		`https://${SERVER_ENDPOINT}${url}`,
 		json
 	).then(async (r)=>{
 		return r.data.data
@@ -139,14 +271,14 @@ const setVideo = async (url) => {
 ipcMain.handle('setvideo-vlc', async (_, url) => {
 	try {
 		if (typeof url !== 'string' || !url.trim()) {
-			throw new Error('Invalid URL provided');
+			throw new Error('Invalid URL provided')
 		}
 		await setVideo(url)
 		return true
 	} catch (error) {
 		return false
 	}
-});
+})
 
 const setTime = async (time) => {
 	return await axios.post(
@@ -181,9 +313,18 @@ ipcMain.handle('open-vlc', async (event) => {
 		await makeRequest_server("/join")
 		const r = await makeRequest_server("/get_playerstatus")
 		let CURRENT_VIDEO_SERVER = r.url.value
-		VLC_ARGS.push('--start-time', `${r.time.value}`, CURRENT_VIDEO_SERVER)
+		let VLC_ARGS = [
+			`--intf`, `qt`,
+			`--extraintf`, `http`,
+			`--http-port`, `${VLC_PORT}`,
+			`--http-password`, `${VLC_HTTP_PASS}`,
+			`--start-time`, `${r.time.value}`,
+			`${CURRENT_VIDEO_SERVER}`,
+			//`--video-on-top`
+		]
 
 		proc_vlc = spawn(VLC_PATH, VLC_ARGS)
+		console.log("spawning vlc:", VLC_PATH, VLC_ARGS)
 
 		proc_vlc.on('spawn', async () => {
 			if (vlcInterval) clearInterval(vlcInterval)
@@ -240,16 +381,16 @@ ipcMain.handle('open-vlc', async (event) => {
 						const isplayingServer = r.is_playing
 						const timeServer = r.time
 						const urlServer = r.url
-						const me = r.users.value[USERID]
-						if (!me.uptodate){
+						const me = r.uptodate[USERID] || 0
+						if (me !== 1){
 							console.log("not up to date!!!")
 							const timeABSserver = Math.abs(timeServer.value - timeVLC)
 							if (isplayingServer.user != USERID && isplayingServer.value != isplayingVLC){
 								await setPlaying(isplayingServer.value)
-								if (isplayingServer.value === "paused"){
-									currentState = "paused"
-								} else {
+								if (isplayingServer.value){
 									currentState = "playing"
+								} else {
+									currentState = "paused"
 								}
 								console.log(`set_playing ${isplayingVLC}, ${isplayingServer.value}`)
 							}
@@ -269,10 +410,10 @@ ipcMain.handle('open-vlc', async (event) => {
 							continue
 						} else {
 							// console.log("checks for up to date regular!!!")
-							if (videoVLC != urlServer.value){
-								console.log(`video changed!!regularr ${videoVLC} ${urlServer.value}`)
-								await makeRequest_server("/update_url", {"new_url":videoVLC})
-							}else if (isplayingVLC != isplayingServer.value) {
+							// if (videoVLC != urlServer.value){
+							// 	console.log(`video changed!!regularr ${videoVLC} ${urlServer.value}`)
+							// 	await makeRequest_server("/update_url", {"new_url":videoVLC})}else 
+							if (isplayingVLC != isplayingServer.value) {
 								await makeRequest_server("/update_isplaying", {"is_playing": isplayingVLC, "new_time": timeVLC})
 								console.log(`state regular update ${isplayingVLC} ${isplayingServer.value}`)
 							} else if (timeVLC != 0 && Math.abs(lastSentTime - timeVLC) > 5){

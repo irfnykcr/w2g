@@ -2,22 +2,29 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
 	openVLC: (url, currentsec) => ipcRenderer.invoke('open-vlc', url, currentsec),
-    setVideoVLC: (url) => ipcRenderer.invoke('setvideo-vlc', url),
-    // setTime: (time) => ipcRenderer.invoke('settime-vlc', time),
+	setVideoVLC: (url) => ipcRenderer.invoke('setvideo-vlc', url),
+
+	setUserCreds: (user, userpsw) => ipcRenderer.invoke('set-usercreds', user, userpsw),
+	setRoomCreds: (roomid, roompsw) => ipcRenderer.invoke('set-roomcreds', roomid, roompsw),
+	showInputDialog: (message) => ipcRenderer.invoke('show-input-dialog', message),
 	getUser: () => ipcRenderer.invoke('get-user'),
-	getUserPsw: () => ipcRenderer.invoke('get-userpsw'),
+	logoutUser: () => ipcRenderer.invoke('logout-user'),
 	getRoom: () => ipcRenderer.invoke('get-room'),
-	getRoomPsw: () => ipcRenderer.invoke('get-roompsw'),
+	leftTheRoom: () => ipcRenderer.invoke('left-room'),
 	getServerEndpoint: () => ipcRenderer.invoke('get-serverendpoint'),
-	// setPlaying: (is_playing) => ipcRenderer.invoke('setplaying-vlc', is_playing),
+
 	onVLCstatus: (callback) => {
-        ipcRenderer.on('vlc-status', (_, data) => {
-            callback(data)
-        })
-    },
+		ipcRenderer.on('vlc-status', (_, data) => {
+			callback(data)
+		})
+	},
 	onServerStatus: (callback) => {
-        ipcRenderer.on('server-status', (_, data) => {
-            callback(data)
-        })
-    }
+		ipcRenderer.on('server-status', (_, data) => {
+			callback(data)
+		})
+	},
+
+	gotoRoomJoin: () => ipcRenderer.send('goto-room_join'),
+	gotoIndex: () => ipcRenderer.send('goto-index'),
+	gotoLogin: () => ipcRenderer.send('goto-login'),
 })

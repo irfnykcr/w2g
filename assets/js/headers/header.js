@@ -1,39 +1,81 @@
+
 tailwind.config = {
 	theme: {
 		extend: {
 			colors: {
-				'turkuazz': '#00d4aa',
-				'dark-bg': '#1a1a1a',
-				'dark-card': '#2a2a2a',
-				'dark-hover': '#3a3a3a',
-				'admin': '#ff5733'
-			}
-		}
-	}
+				turkuazz: "#14a689ff",
+				"dark-turkuazz": "#0e725eff",
+				"dark-bg": "#1a1a1a",
+				"dark-card": "#2a2a2a",
+				"dark-hover": "#3a3a3a",
+				admin: "#ff5733",
+	  		},
+		},
+		screens: {
+			sm: "850px",
+		},
+	},
 }
+
 document.addEventListener("DOMContentLoaded", () => {
-	const headerEl = document.querySelector("header")
-    
-	const makeheader = () => {
-		if (headerEl) {
-			headerEl.innerHTML = `
-		<div class="flex items-center justify-between">
-			<!-- left side -->
-			<div class="flex space-x-4"></div>
-
-			<!-- center/logo -->
-			<div class="flex items-center space-x-2">
-			    <div class="w-8 h-8 bg-turkuazz rounded flex items-center justify-center">
-				    <span class="text-dark-bg font-bold text-sm">T</span>
-			    </div>
-			    <span class="text-turkuazz font-bold text-xl">TURKUAZZ</span>
+  const headerEl = document.querySelector("header")
+ 
+  const makeheader = () => {
+	if (headerEl) {
+		_html = `
+			<div class="flex items-center justify-between">
+				<!-- left side -->
+				<div class="flex space-x-2 sm:space-x-4"></div>
+				<!-- center/logo -->
+				<div class="flex items-center space-x-2">
+					<div class="w-6 h-6 sm:w-8 sm:h-8 bg-turkuazz rounded flex items-center justify-center">
+						<span class="text-dark-bg font-bold text-xs sm:text-sm">T</span>
+					</div>
+					<span class="text-turkuazz font-bold text-lg sm:text-xl">TURKUAZZ</span>
+				</div>
+				<!-- right side -->
+				<div class="flex items-center space-x-2 sm:space-x-4">
+					<div class="hidden sm:flex text-xs text-gray-400 space-x-3">
+						<span>Ctrl+1: Video</span>
+						<span>Ctrl+2: Chat</span>
+						<span>Ctrl+0: Show All</span>
+					</div>
+		`
+		if (headerEl.querySelector("#logout") !== null){
+			_html += `
+				<button id="logout" class="px-4 py-2 bg-dark-turkuazz text-white rounded hover:bg-dark-hover">
+					Logout
+				</button>
+			`
+  		}
+		if (headerEl.querySelector("#lefttheroom") !== null){
+			_html += `
+				<button id="lefttheroom" class="px-4 py-2 bg-dark-turkuazz text-white rounded hover:bg-dark-hover">
+					Left the Room
+				</button>
+			`
+  		}
+		_html += `
+				</div>
 			</div>
-
-			<!-- right side -->
-			<div class="flex items-center space-x-4"></div>
-		</div>
-	    `
-		}
+		`
+		headerEl.innerHTML = _html
 	}
-	makeheader()
+  }
+  makeheader()
+  const logoutButton = headerEl.querySelector("#logout")
+  if (logoutButton){
+	logoutButton.addEventListener("click", async ()=>{
+		await window.electronAPI.logoutUser()
+		await window.electronAPI.gotoLogin()
+	})
+  }
+
+  const leftButton = headerEl.querySelector("#lefttheroom")
+  if (leftButton){
+	leftButton.addEventListener("click", async ()=>{
+		await window.electronAPI.leftTheRoom()
+		await window.electronAPI.gotoRoomJoin()
+	})
+  }
 })

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<script>
+	let USER
+	let USER_PSW
+	const checkLogin = async (username, password) => {
+		return await window.electronAPI.setUserCreds(username, password).then(async (r) => {
+			if (r) {
+				await window.electronAPI.gotoRoomJoin()
+				return true
+			}
+			console.log("login failed.")
+			return false
+		})
+	}
+	(async () => {
+		await window.electronAPI.getUser().then((r) => {
+			if (r === false) { 
+				console.log("there is no user.")
+				return 
+			}
+			console.log("there is user.", r)
+			USER = r.user
+			USER_PSW = r.psw
+		})
+		console.log(USER,USER_PSW)
+		if (USER && USER_PSW) {
+			console.log("trying:", USER, USER_PSW)
+			await checkLogin(USER, USER_PSW)
+		}
+	})()
+</script>
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Login</title>
+	<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-dark-bg text-white h-screen flex flex-col overflow-hidden">
+	<header class="bg-dark-bg border-b border-gray-700 px-4 sm:px-6 py-4 flex-shrink-0"></header>
+
+	<div class="bg-dark-card p-6 rounded-lg shadow-md w-80 mx-auto my-auto">
+		<h2 class="text-2xl font-bold mb-6 text-center text-turkuazz">Login</h2>
+		<div>
+			<div class="mb-4">
+				<label for="username" class="block mb-2 font-semibold text-turkuazz">Username</label>
+				<input type="text" id="username" name="username" required class="w-full p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
+			</div>
+			<div class="mb-4">
+				<label for="password" class="block mb-2 font-semibold text-turkuazz">Password</label>
+				<input type="password" id="password" name="password" required class="w-full p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
+			</div>
+			<button id="send-login" type="button" class="w-full p-2 bg-turkuazz text-dark-bg rounded-md hover:bg-dark-turkuazz">Login</button>
+		</div>
+	</div>
+</body>
+<script src="../assets/js/headers/header.js" defer></script>
+<script>
+	document.addEventListener("DOMContentLoaded", async () => {
+		const sendLogin = document.querySelector("#send-login")
+		const username = document.querySelector("#username")
+		const password = document.querySelector("#password")
+
+		sendLogin.addEventListener("click", async () => {
+			if (username.value && password.value) {
+				await checkLogin(username.value, password.value)
+			}
+		})
+		username.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && username.value && password.value) {
+				await checkLogin(username.value, password.value)
+			}
+		})
+
+		password.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && username.value && password.value) {
+				await checkLogin(username.value, password.value)
+			}
+		})
+	})
+</script>
+</html>

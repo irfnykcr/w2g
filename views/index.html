@@ -1,65 +1,87 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TURKUAZZ W2G</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="../assets/css/style.css">
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>TURKUAZZ W2G</title>
+	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="../assets/css/style.css">
 </head>
-<body class="bg-dark-bg text-white min-h-screen flex flex-col overflow-hidden">
-    <!-- dynamic header -->
-    <header class="bg-dark-bg border-b border-gray-700 px-6 py-4 flex-shrink-0"></header>
+<body class="bg-dark-bg text-white h-screen flex flex-col overflow-hidden">
+	<!-- dynamic header -->
+	<header class="bg-dark-bg border-b border-gray-700 px-4 sm:px-6 py-4 flex-shrink-0">
+		<div id="logout"></div>
+		<div id="lefttheroom"></div>
+	</header>
+	
+	<!-- toggle sections -->
+	<div id="collapsed-toggles" class="flex justify-center gap-4 p-2 bg-dark-bg border-b border-gray-700 hidden">
+		<button id="expand-url" class="bg-dark-card hover:bg-dark-hover text-turkuazz px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium hidden">
+			📹 Show Video Section
+		</button>
+		<button id="expand-chat" class="bg-dark-card hover:bg-dark-hover text-turkuazz px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium hidden">
+			💬 Show Chat Section
+		</button>
+	</div>
+	
+	<!-- main content -->
+	<main class="flex flex-1 p-3 sm:p-6 overflow-hidden gap-3 sm:gap-6 flex-col sm:flex-row min-h-0">
+		<!-- video input url section -->
+		<section id="url-section" class="bg-dark-card rounded-lg shadow-lg relative transition-all duration-300 ease-in-out flex flex-col overflow-hidden">
+			<button id="toggle-url-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
+				&times;
+			</button>
+			<div id="url-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300">
+				<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Watch Video</h2>
+				<div class="flex flex-col gap-4">
+					<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+						<input
+							id="urlof-thevideo"
+							type="text"
+							placeholder="Enter video URL"
+							class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+						/>
+						<button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-3 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+							set video
+						</button>
+					</div>
+					<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
+						watch video
+					</button>
+				</div>
+			</div>
+		</section>
 
-    <!-- video input url -->
-    <main class="flex flex-1 p-6 overflow-hidden gap-6">
-        <section id="url-section" class="bg-dark-card rounded-lg shadow-lg relative transition-all duration-300 ease-in-out flex flex-col overflow-hidden">
-            <button id="toggle-url-section" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl font-bold z-10">&times;</button>
-            <div id="url-content" class="p-6 flex flex-col flex-1 transition-opacity duration-300">
-                <h2 class="text-2xl font-bold text-turkuazz mb-4">watch video</h2>
-                <div class="flex flex-col gap-4">
-                    <div class="flex items-center gap-2">
-                        <input
-                            id="urlof-thevideo"
-                            type="text"
-                            placeholder="Enter video URL"
-                            class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
-                        />
-                        <button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-6 rounded-md hover:bg-opacity-90 transition-colors min-w-[120px]">
-                            set video
-                        </button>
-                    </div>
-                    <button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors">
-                        watch video
-                    </button>
-                </div>
-            </div>
-        </section>
+		<!-- chat section -->
+		<section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative transition-all duration-300 ease-in-out flex flex-col overflow-hidden flex-1 min-h-0">
+			<button id="toggle-chat-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
+				&times;
+			</button>
+			
+			<div class="p-4 sm:p-6 pb-0 flex-shrink-0">
+				<h2 id="chat-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Chat</h2>
+			</div>
+			
+			<div id="chat-content" class="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg bg-dark-bg rounded-md mx-4 sm:mx-6 p-4 border border-gray-700 min-h-0">
+				<!-- dynamic -->
+			</div>
+			
+			<div class="flex gap-2 p-4 sm:p-6 pt-4 flex-shrink-0">
+				<input
+					id="input-chatmessage"
+					type="text"
+					placeholder="Type your message..."
+					class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+				/>
+				<button id="send-chatmessage" class="bg-turkuazz text-dark-bg font-bold py-3 px-4 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+					send
+				</button>
+			</div>
+		</section>
+	</main>
 
-        <!-- chat section -->
-        <section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative transition-all duration-300 ease-in-out flex flex-col overflow-hidden">
-            <button id="toggle-chat-section" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl font-bold z-10">&times;</button>
-            <div  class="p-6 flex flex-col flex-1 transition-opacity duration-300">
-                <h2 class="text-2xl font-bold text-turkuazz mb-4">Chat</h2>
-                <div id="chat-content" class="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg max-h-[70vh]"></div>
-            </div>
-            <div class="flex gap-2 m-2">
-                <input
-                    id="input-chatmessage"
-                    type="text"
-                    placeholder="Type your message..."
-                    class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz"
-                />
-                <button id="send-chatmessage" class="bg-turkuazz text-dark-bg font-bold py-3 px-6 rounded-md hover:bg-opacity-90 transition-colors">
-                    send
-                </button>
-            </div>
-        </section>
-    </main>
-
-    
-    <script src="../assets/js/headers/header.js" defer></script>
-    <script src="../assets/js/index.js" defer></script>
-    <script type="module" src="../assets/js/wss.js" defer></script>
+	<script src="../assets/js/headers/header.js" defer></script>
+	<script type="module" src="../assets/js/wss.js" defer></script>
+	<script src="../assets/js/index.js" defer></script>
 </body>
 </html>
