@@ -216,9 +216,9 @@ const makeRequest_server = async (url, json) => {
 		return {status: false, message:`useridid, roomid, ${USERID}, ${ROOMID}`}
 	}
 	json.userid = USERID
-	json.userpsw = await keytar.getPassword("turkuazz_user", USERID)
+	json.userpsw = await keytar.getPassword("turkuazz", "userpsw")
 	json.roomid = ROOMID
-	json.roompsw = await keytar.getPassword("turkuazz_room", ROOMID)
+	json.roompsw = await keytar.getPassword("turkuazz", "roompsw")
 	const r = await axios.post(
 		`https://${SERVER_ENDPOINT}${url}`,
 		json
@@ -324,7 +324,6 @@ ipcMain.handle('open-vlc', async (event) => {
 		]
 
 		proc_vlc = spawn(VLC_PATH, VLC_ARGS)
-		console.log("spawning vlc:", VLC_PATH, VLC_ARGS)
 
 		proc_vlc.on('spawn', async () => {
 			if (vlcInterval) clearInterval(vlcInterval)
@@ -381,8 +380,9 @@ ipcMain.handle('open-vlc', async (event) => {
 						const isplayingServer = r.is_playing
 						const timeServer = r.time
 						const urlServer = r.url
+						console.log(r.uptodate, r.uptodate[USERID])
 						const me = r.uptodate[USERID] || 0
-						if (me !== 1){
+						if (!me){
 							console.log("not up to date!!!")
 							const timeABSserver = Math.abs(timeServer.value - timeVLC)
 							if (isplayingServer.user != USERID && isplayingServer.value != isplayingVLC){
