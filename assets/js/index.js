@@ -1,9 +1,28 @@
+const logger = {
+	info: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.log(`[${timestamp}] [INFO]`, ...args)
+	},
+	warn: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.warn(`[${timestamp}] [WARN]`, ...args)
+	},
+	error: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.error(`[${timestamp}] [ERROR]`, ...args)
+	},
+	debug: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.log(`[${timestamp}] [DEBUG]`, ...args)
+	}
+}
+
 window.electronAPI.onVLCstatus((data) => {
-	console.log("VLC Status:", data)
+	logger.debug("VLC Status:", data)
 })
 
 window.electronAPI.onServerStatus((data) => {
-	console.log("SERVER Status:", data)
+	logger.debug("SERVER Status:", data)
 })
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -20,7 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (videoUrlValue) {
 		await window.electronAPI.setVideoVLC(videoUrlValue)
 	} else {
-		console.error("Video URL is empty or invalid.")
+		logger.error("Video URL is empty or invalid.")
 	}
 	})
 

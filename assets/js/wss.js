@@ -1,3 +1,22 @@
+const logger = {
+	info: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.log(`[${timestamp}] [INFO]`, ...args)
+	},
+	warn: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.warn(`[${timestamp}] [WARN]`, ...args)
+	},
+	error: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.error(`[${timestamp}] [ERROR]`, ...args)
+	},
+	debug: (...args) => {
+		const timestamp = new Date().toISOString()
+		console.log(`[${timestamp}] [DEBUG]`, ...args)
+	}
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
 	const chatRoomName = document.querySelector("#chat-roomname")
 	const inputRoomName = document.querySelector("#input-roomname")
@@ -7,34 +26,30 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let USER 
 	let USER_PSW
 	await window.electronAPI.getUser().then((r)=>{
-		console.log(r)
+		logger.debug(r)
 		USER = r.user
 		USER_PSW = r.psw
 	})
 	let ROOM_ID
 	let ROOM_PSW 
 	await window.electronAPI.getRoom().then(async (r)=>{
-		console.log(r)
+		logger.debug(r)
 		if (r === false){
-			console.log("asking for room creds")
+			logger.info("asking for room creds")
 			// redirect to room_join.html
 		} else {
 			ROOM_ID = r.room
 			ROOM_PSW = r.psw
-			console.log("already have creds",r, ROOM_ID, ROOM_PSW)
+			logger.debug("already have creds",r, ROOM_ID, ROOM_PSW)
 		}
+		if (ROOM_ID === null || ROOM_ID === undefined){
+			logger.info("reload1")
+			window.electronAPI.gotoRoomJoin()
+		}
+	}).catch((err)=>{
+		logger.info("reload2")
+		window.electronAPI.gotoRoomJoin()
 	})
-	if (ROOM_ID && ROOM_PSW){
-		if (!await window.electronAPI.setRoomCreds(ROOM_ID, ROOM_PSW)){
-			console.log("reload1")
-			await window.electronAPI.gotoRoomJoin()
-		}
-	} else {
-		console.log("reload2")
-		await window.electronAPI.gotoRoomJoin()
-	}
-	
-
 	const joinquery = new URLSearchParams({
 		user: USER,
 		psw: USER_PSW,
@@ -45,12 +60,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const socket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${joinquery}`)
 
 	socket.onopen = () => {
-		console.log("WebSocket connection established")
+		logger.info("WebSocket connection established")
 	}
 
 	socket.onmessage = (r) => {
 		const data = JSON.parse(r.data)
-		console.log("Message received", data)
+		logger.debug("Message received", data)
 
 		if (data.type == "room_info") {
 			chatRoomName.innerHTML = `Chat - ${data.room_name}`
@@ -62,16 +77,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 				addMessage(message)
 			})
 		} else {
-			console.log("couldnt match the type.", data.type)
+			logger.warn("couldnt match the type.", data.type)
 		}
 	}
 
 	socket.onclose = () => {
-		console.log("WebSocket connection closed")
+		logger.info("WebSocket connection closed")
 	}
 
 	socket.onerror = (error) => {
-		console.error("WebSocket error:", error)
+		logger.error("WebSocket error:", error)
 	}
 
 	const messages = document.getElementById("chat-content")
@@ -92,7 +107,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	}
 
 	function addMessage(data) {
-		console.log(data)
+		logger.debug(data)
 		const user = data.user
 		const text = data.message
 		const date = new Date(data.date * 1000).toLocaleString()
