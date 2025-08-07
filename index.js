@@ -9,7 +9,8 @@ const { Menu } = require('electron')
 // console.log(bcrypt.hashSync("123", 10))
 // process.exit()
 
-
+keytar.deletePassword("turkuazz","user")
+keytar.deletePassword("turkuazz","userpsw")
 
 const isDev = !app.isPackaged
 const __apppath = isDev ? __dirname : process.resourcesPath
@@ -146,6 +147,7 @@ ipcMain.handle('get-user', async (event) => {
 	} catch {
 		return false
 	}
+	console.log("user:", USERID)
 	return {
 		user: USERID,
 		psw: _userpsw
@@ -322,7 +324,12 @@ ipcMain.handle('open-vlc', async (event) => {
 			`${CURRENT_VIDEO_SERVER}`,
 			//`--video-on-top`
 		]
+		console.log("vlcargs:", VLC_ARGS)
 
+		if (proc_vlc) {
+			console.log("there is already a video playing.")
+			return
+		}
 		proc_vlc = spawn(VLC_PATH, VLC_ARGS)
 
 		proc_vlc.on('spawn', async () => {
@@ -339,7 +346,7 @@ ipcMain.handle('open-vlc', async (event) => {
 			let isplayingVLC = undefined
 			let updateTimeout = Date.now()
 
-			setTimeout(() => {}, 250)
+			await new Promise(resolve => setTimeout(resolve, 100))
 
 			while (true){
 				try{
@@ -349,10 +356,10 @@ ipcMain.handle('open-vlc', async (event) => {
 					}
 				} catch {
 				}
-				setTimeout(() => {}, 100)
+				await new Promise(resolve => setTimeout(resolve, 100))
 			}
 			while (true){
-				setTimeout(() => {}, 100)
+				await new Promise(resolve => setTimeout(resolve, 100))
 				try {
 					const r = await getInfo().then((r)=>{return r.data})
 					stateVLC = r.state
@@ -396,8 +403,15 @@ ipcMain.handle('open-vlc', async (event) => {
 							}
 							if (timeServer.user != USERID && timeABSserver > 5) {
 								await setTime(timeServer.value)
-								currentTime = timeServer.value
-								lastSentTime = timeServer.value
+								while (timeVLC !== currentTime) {
+									const info = await getInfo().then((r) => r.data)
+									timeVLC = Math.floor(parseFloat(info.length) * parseFloat(info.position))
+									console.log("trying to sync..", timeVLC, currentTime)
+									await new Promise(resolve => setTimeout(resolve, 100))
+									// setTimeout(()=>{}, 100)
+								}
+								currentTime = timeVLC
+								lastSentTime = timeVLC
 								console.log(`set_time ${timeABSserver} ${timeVLC} ${timeServer.value}`)
 							}
 							if (urlServer.user != USERID && urlServer.value != videoVLC) {
@@ -405,6 +419,7 @@ ipcMain.handle('open-vlc', async (event) => {
 								currentVideo = urlServer.value
 								console.log("!!!!!setvideo")
 							}
+
 							await makeRequest_server("/imuptodate")
 							console.log("it is up to date now!!!")
 							continue

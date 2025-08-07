@@ -1,5 +1,5 @@
 {
-	"VLC_PORT": "8093",
+	"VLC_PORT": 8093,
 	"SERVER_ENDPOINT": "w2g.turkuazz.vip",
 	"VLC_FINDER": true,
 	"VLC_PATH": "/usr/bin/vlc",

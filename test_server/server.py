@@ -7,9 +7,16 @@ from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv
 import json
+import signal
+import sys
+import atexit
 load_dotenv()
 
 app = FastAPI()
+
+
+PLAYER_STATUS = {} # {roomid: {"is_playing": {}, "url": {}, "uptodate": {}, "time": {}}}}
+ 
 
 app.add_middleware(
     CORSMiddleware,
@@ -79,62 +86,115 @@ def checkUser(userid: str, userpsw: str):
 		conn.close()
 
 def get_player_status(roomid: str):
+	global PLAYER_STATUS
+	if roomid not in PLAYER_STATUS:
+		PLAYER_STATUS[roomid] = {
+			"is_playing": {},
+			"url": {},
+			"uptodate": {},
+			"time": {}
+		}
+	return PLAYER_STATUS[roomid]
+
+def update_player_status(roomid: str, **kwargs):
+	global PLAYER_STATUS
+	if roomid not in PLAYER_STATUS:
+		PLAYER_STATUS[roomid] = {
+			"is_playing": {},
+			"url": {},
+			"uptodate": {},
+			"time": {}
+		}
+	
+	for field, value in kwargs.items():
+		if field in ['is_playing', 'url', 'uptodate', 'time']:
+			PLAYER_STATUS[roomid][field] = value
+	return True
+
+def save_player_status_to_db():
+	global PLAYER_STATUS
 	conn = get_db_connection()
 	if not conn:
-		return None
+		print("Failed to save player status to database")
+		return
+	
 	cursor = None
 	try:
 		cursor = conn.cursor()
-		cursor.execute("SELECT is_playing, url, uptodate, time FROM player_status WHERE roomid = %s", (roomid,))
-		result = cursor.fetchone()
-		if result:
-			return {
-				"is_playing": json.loads(result[0]) if result[0] else {},
-				"url": json.loads(result[1]) if result[1] else {},
-				"uptodate": json.loads(result[2]) if result[2] else {},
-				"time": json.loads(result[3]) if result[3] else {}
-			}
-		return None
-	except:
+		
+		for roomid, status in PLAYER_STATUS.items():
+			is_playing = json.dumps(status.get("is_playing", {}))
+			url = json.dumps(status.get("url", {}))
+			time_data = json.dumps(status.get("time", {}))
+
+			cursor.execute("""
+				UPDATE player_status 
+				SET is_playing = %s, url = %s, time = %s,
+				WHERE roomid = %s
+			""", (is_playing, url, time_data, roomid))
+		conn.commit()
+		print(f"Saved player status for {len(PLAYER_STATUS)} rooms to database")
+		
+	except Exception as e:
+		print(f"Error saving player status to database: {e}")
 		print_exc()
-		print(f"Error getting player status")
-		return None
 	finally:
 		if cursor:
 			cursor.close()
 		conn.close()
 
-def update_player_status(roomid: str, **kwargs):
+def load_player_status_from_db():
+	global PLAYER_STATUS
 	conn = get_db_connection()
 	if not conn:
-		return False
+		print("Failed to load player status from database")
+		return
+	
 	cursor = None
 	try:
 		cursor = conn.cursor()
+		cursor.execute("SELECT roomid, is_playing, url, time FROM player_status")
+		results = cursor.fetchall()
 		
-		updates = []
-		values = []
+		for roomid, is_playing, url, time_data in results:
+			PLAYER_STATUS[roomid] = {
+				"is_playing": json.loads(is_playing) if is_playing else {},
+				"url": json.loads(url) if url else {},
+				"uptodate": {},  # Reset uptodate on startup
+				"time": json.loads(time_data) if time_data else {}
+			}
 		
-		for field, value in kwargs.items():
-			if field in ['is_playing', 'url', 'uptodate', 'time']:
-				updates.append(f"{field} = %s")
-				values.append(json.dumps(value))
+		print(f"Loaded player status for {len(PLAYER_STATUS)} rooms from database")
 		
-		if updates:
-			values.append(roomid)
-			query = f"UPDATE player_status SET {', '.join(updates)} WHERE roomid = %s"
-			cursor.execute(query, values)
-			conn.commit()
-			return True
-		return False
-	except:
+	except Exception as e:
+		print(f"Error loading player status from database: {e}")
 		print_exc()
-		print(f"Error updating player status")
-		return False
 	finally:
 		if cursor:
 			cursor.close()
 		conn.close()
+
+def cleanup_and_save():
+	print("Server shutting down, saving player status...")
+	save_player_status_to_db()
+
+atexit.register(cleanup_and_save)
+def signal_handler(sig, frame):
+	print(f"Received signal {sig}")
+	cleanup_and_save()
+	sys.exit(0)
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+@app.on_event("startup")
+async def startup_event():
+	print("FastAPI starting up, loading player status from database...")
+	load_player_status_from_db()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+	print("FastAPI shutting down, saving player status to database...")
+	save_player_status_to_db()
 
 
 # gets
@@ -153,9 +213,6 @@ async def get_playerstatus(request: Request):
 		return {"status": False, "data": "password is incorrect for user"}
 	
 	player_status = get_player_status(roomid)
-	if player_status is None:
-		return {"status": False, "data": "room not found"}
-		
 	return {"status": True, "data": player_status}
 
 # updates
@@ -245,11 +302,7 @@ async def join(request: Request):
 		
 	user = str(data["userid"])
 	
-	# Get current player status
 	player_status = get_player_status(roomid)
-	if not player_status:
-		return {"status": False, "data": "room not found"}
-
 	uptodate = player_status.get("uptodate", {})
 	uptodate[user] = False
 	
@@ -272,9 +325,6 @@ async def leave(request: Request):
 	user = str(data["userid"])
 
 	player_status = get_player_status(roomid)
-	if not player_status:
-		return {"status": False, "data": "room not found"}
-	
 	uptodate = player_status.get("uptodate", {})
 	uptodate.pop(user, None)
 	
@@ -297,9 +347,6 @@ async def imuptodate(request: Request):
 	user = str(data["userid"])
 	
 	player_status = get_player_status(roomid)
-	if not player_status:
-		return {"status": False, "data": "room not found"}
-	
 	uptodate = player_status.get("uptodate", {})
 	if user in uptodate:
 		uptodate[user] = True
