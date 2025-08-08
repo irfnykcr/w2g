@@ -1,11 +1,10 @@
-const { app, dialog, BrowserWindow, ipcMain } = require('electron/main')
+const { app, BrowserWindow, ipcMain } = require('electron/main')
 const axios = require('axios')
 const path = require('node:path')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const keytar = require('keytar')
 const { Menu } = require('electron')
-const simpleGit = require('simple-git')
 // const bcrypt = require('bcryptjs')
 // console.log(bcrypt.hashSync("123", 10))
 // process.exit()
@@ -41,7 +40,6 @@ const appConfigPath = isDev ? path.join(__apppath, 'resources/config/config.json
 let appConfig = {}
 if (!fs.existsSync(appConfigPath)) {
 	logger.error("config not found")
-	app.quit()
 	process.exit()
 }
 
@@ -203,7 +201,7 @@ let proc_vlc
 let vlcInterval
 let serverInterval
 
-const createWindow = async () => {
+const createWindow = () => {
 	const win = new BrowserWindow({
 		width: 1280,
 		height: 720,
@@ -212,7 +210,6 @@ const createWindow = async () => {
 			preload: path.join(__dirname, 'preload.js')
 		}
 	})
-	await checkLatestVersion()
 	win.webContents.on('context-menu', (event, params) => {
 		const menu = Menu.buildFromTemplate([
 			{ role: 'cut' },
@@ -552,62 +549,6 @@ ipcMain.handle('open-vlc', async (event) => {
 		})
 	})
 })
-
-
-async function checkLatestVersion() {
-	try {
-		const git = simpleGit(app.getAppPath())
-		const localCommit = await git.revparse(['HEAD'])
-
-		const repoUrl = 'https://api.github.com/repos/irfnykcr/w2g/commits/main'
-		const response = await axios.get(repoUrl, {
-			headers: { 'Accept': 'application/vnd.github.v3+json' }
-		})
-		const remoteCommit = response.data.sha
-
-		if (localCommit !== remoteCommit) {
-			const options = {
-				type: 'question',
-				buttons: ['Yes', 'No'],
-				title: 'Update Available',
-				message: 'A new version is available. Do you want to upgrade?'
-			}
-			await dialog.showMessageBox(null, options).then(async (response) => {
-				if (response.response === 0) {
-					try {
-					 	await git.fetch('origin', 'main')
-						await git.reset(['--hard', 'origin/main'])
-						logger.info('App updated successfully')
-						await dialog.showMessageBox({
-							type: 'info',
-							title: 'Update Complete',
-							message: 'App updated. Please restart to apply changes.'
-						})
-						app.quit()
-						process.exit()
-					} catch (error) {
-						logger.error('Update failed:', error.message)
-						dialog.showErrorBox('Update Failed', 'Failed to pull latest changes.')
-						app.quit()
-						process.exit()
-					}
-				} else {
-					logger.warn('User declined upgrade')
-					dialog.showErrorBox('Update Failed', 'Declined the upgrade.')
-					app.quit()
-					process.exit()
-				}
-			})
-		} else {
-			logger.info('Running the latest version')
-		}
-	} catch (error) {
-		logger.error('Error checking version:', error.message)
-		dialog.showErrorBox('Update Failed', 'Could not check the version.')
-		app.quit()
-		process.exit()
-	}
-}
 
 app.whenReady().then(() => {
 	createWindow()
