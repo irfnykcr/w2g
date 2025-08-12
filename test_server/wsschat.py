@@ -98,11 +98,12 @@ class ChatApp:
 					return roomid
 		return None
 
-	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str):
+	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str,  history: bool):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
 		self.active_rooms[roomid].append({"websocket": websocket, "username": user})
-		await self.send_history_to_websocket(websocket, roomid)
+		if history:
+			await self.send_history_to_websocket(websocket, roomid)
 		await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
 
 	async def handle_disconnect(self, websocket: WebSocket):
@@ -227,9 +228,10 @@ async def websocket_endpoint(
 	psw: str = Query(...),
 	roomid: str = Query(...),
 	roompsw: str = Query(...),
+	history: str = Query(...),
 ):
 	print("connection")
-	if not user or not psw or not roomid or not roompsw:
+	if not (user and psw and roomid and roompsw and history):
 		print("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
 		return
@@ -257,7 +259,7 @@ async def websocket_endpoint(
 		print(f"Error sending room info: {e}")
 
 	try:
-		await chat.handle_connect(websocket, user, roomid)
+		await chat.handle_connect(websocket, user, roomid, (history == "1"))
 
 		while True:
 			data = await websocket.receive_text()

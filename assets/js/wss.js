@@ -36,7 +36,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		logger.debug(r)
 		if (r === false){
 			logger.info("asking for room creds")
-			// redirect to room_join.html
+			window.electronAPI.gotoRoomJoin()
 		} else {
 			ROOM_ID = r.room
 			ROOM_PSW = r.psw
@@ -50,44 +50,69 @@ document.addEventListener("DOMContentLoaded", async () => {
 		logger.info("reload2")
 		window.electronAPI.gotoRoomJoin()
 	})
+
 	const joinquery = new URLSearchParams({
 		user: USER,
 		psw: USER_PSW,
 		roomid: ROOM_ID,
 		roompsw: ROOM_PSW,
 	}).toString()
+	
 
-	const socket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${joinquery}`)
+	let reconnectAttempts = 0
+	let ws
 
-	socket.onopen = () => {
-		logger.info("WebSocket connection established")
-	}
-
-	socket.onmessage = (r) => {
-		const data = JSON.parse(r.data)
-		logger.debug("Message received", data)
-
-		if (data.type == "room_info") {
-			chatRoomName.innerHTML = `Chat - ${data.room_name}`
-			inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
-		} else if (data.type == "new_message") {
-			addMessage(data)
-		} else if (data.type == "room_history") {
-			data.messages.forEach((message) => {
-				addMessage(message)
-			})
+	function connectWebSocket(reconnectDelay=0, history="0") {
+		const maxReconnectAttempts = 10
+		if (reconnectAttempts < maxReconnectAttempts) {
+			reconnectAttempts++
+			logger.info(`Attempting to connect... (${reconnectAttempts}/${maxReconnectAttempts})`)
+			setTimeout(() => {
+				const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${joinquery}&history=${history}`)
+				attachSocketEvents(newSocket)
+			}, reconnectDelay)
 		} else {
-			logger.warn("couldnt match the type.", data.type)
+			logger.error("Max reconnect attempts reached. Could not reconnect to WebSocket.")
 		}
 	}
 
-	socket.onclose = () => {
-		logger.info("WebSocket connection closed")
+
+	function attachSocketEvents(socket) {
+		socket.onopen = () => {
+			logger.info("WebSocket connection established")
+		}
+
+		socket.onmessage = (r) => {
+			const data = JSON.parse(r.data)
+			logger.debug("Message received", data)
+
+			if (data.type == "room_info") {
+				chatRoomName.innerHTML = `Chat - ${data.room_name}`
+				inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
+			} else if (data.type == "new_message") {
+				addMessage(data)
+			} else if (data.type == "room_history") {
+				data.messages.forEach((message) => {
+					addMessage(message)
+				})
+			} else {
+				logger.warn("couldnt match the type.", data.type)
+			}
+		}
+
+		socket.onclose = () => {
+			logger.info("WebSocket connection closed")
+			connectWebSocket(2000) // 2000ms
+		}
+
+		socket.onerror = (error) => {
+			logger.error("WebSocket error:", error)
+		}
+
+		ws = socket
 	}
 
-	socket.onerror = (error) => {
-		logger.error("WebSocket error:", error)
-	}
+	connectWebSocket(0, "1")
 
 	const messages = document.getElementById("chat-content")
 	const messageButton = document.getElementById("send-chatmessage")
@@ -96,7 +121,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	function sendMessage() {
 		const message = messageInput.value.trim()
 		if (message) {
-			socket.send(
+			ws.send(
 				JSON.stringify({
 					type: "send_message",
 					message: message,
@@ -107,7 +132,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	}
 
 	function addMessage(data) {
-		logger.debug(data)
+		// logger.debug(data)
 		const user = data.user
 		const text = data.message
 		const date = new Date(data.date * 1000).toLocaleString()

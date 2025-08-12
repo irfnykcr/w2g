@@ -391,7 +391,7 @@ ipcMain.handle('open-vlc', async (event) => {
 			`--http-password`, `${VLC_HTTP_PASS}`,
 			`--start-time`, `${r.time.value}`,
 			`${CURRENT_VIDEO_SERVER}`,
-			//`--video-on-top`
+			`--video-on-top`
 		]
 		logger.info("vlcargs:", VLC_ARGS)
 
