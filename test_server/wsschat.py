@@ -68,7 +68,7 @@ def checkRoom(roomid: str, roompsw: str):
 		cursor.execute("SELECT password_hash, name FROM rooms WHERE roomid = %s", (roomid,))
 		result = cursor.fetchone()
 		if result and checkpw(roompsw.encode(), result[0].encode()):
-			return result[1]  # Return room name
+			return result[1]
 		return False
 	except Exception as e:
 		print(f"Error checking room: {e}")
@@ -83,6 +83,8 @@ class ChatApp:
 	def __init__(self):
 		# {roomid: [{"websocket": websocket, "username": username}]}
 		self.active_rooms = {}
+		# {roomid: [{"username": username, "imageurl": imageurl}]}
+		self.room_watchers = {}
 
 	def get_user_from_websocket(self, websocket):
 		for room_data in self.active_rooms.values():
@@ -98,6 +100,64 @@ class ChatApp:
 					return roomid
 		return None
 
+	async def handle_watcher_update(self, websocket: WebSocket, data):
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		
+		if not user or not roomid:
+			return
+		
+		is_watching = data.get("is_watching", False)
+		provided_imageurl = data.get("imageurl", "")
+		
+		user_imageurl = ""
+		if provided_imageurl:
+			user_imageurl = provided_imageurl
+		else:
+			conn = get_db_connection()
+			if conn:
+				cursor = None
+				try:
+					cursor = conn.cursor()
+					cursor.execute("SELECT imageurl FROM users WHERE user = %s", (user,))
+					result = cursor.fetchone()
+					if result and result[0]:
+						user_imageurl = result[0]
+				except Exception as e:
+					print(f"Error fetching user imageurl: {e}")
+				finally:
+					if cursor:
+						cursor.close()
+					conn.close()
+		
+		if roomid not in self.room_watchers:
+			self.room_watchers[roomid] = []
+		
+		self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
+		
+		if is_watching:
+			self.room_watchers[roomid].append({
+				"username": user,
+				"imageurl": user_imageurl
+			})
+		
+		await self.send_watchers_to_room(roomid)
+
+	async def send_watchers_to_room(self, roomid):
+		if roomid in self.active_rooms:
+			watchers = self.room_watchers.get(roomid, [])
+			data = {
+				"type": "watchers_update",
+				"watchers": watchers
+			}
+			
+			for user_data in self.active_rooms[roomid]:
+				websocket = user_data["websocket"]
+				try:
+					await websocket.send_text(dumps(data))
+				except Exception as e:
+					print(f"Error sending watchers update to {user_data['username']}: {e}")
+
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str,  history: bool):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
@@ -105,24 +165,38 @@ class ChatApp:
 		if history:
 			await self.send_history_to_websocket(websocket, roomid)
 		await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
+		await self.send_watchers_to_room(roomid)
 
 	async def handle_disconnect(self, websocket: WebSocket):
 		roomid = self.get_room_from_websocket(websocket)
 		user = self.get_user_from_websocket(websocket)
 
 		if roomid is None or roomid not in self.active_rooms:
-			print("WebSocket not associated with any room.")
+			print("room is not active.")
 			return
+			
+		await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
 		if user:
-			await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
+			if roomid in self.room_watchers:
+				self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
 
 		self.active_rooms[roomid] = [user_data for user_data in self.active_rooms[roomid] if user_data["websocket"] != websocket]
 		
 		if not self.active_rooms[roomid]:
 			del self.active_rooms[roomid]
+			if roomid in self.room_watchers:
+				del self.room_watchers[roomid]
+		else:
+			await self.send_watchers_to_room(roomid)
 
 	async def handle_message(self, websocket: WebSocket, data):
+		if data.get("type") == "watcher_update":
+			await self.handle_watcher_update(websocket, data)
+			return
+			
 		message = data.get("message")
+		reply_to = data.get("reply_to")
+		print(data, reply_to)
 		user = self.get_user_from_websocket(websocket)
 		roomid = self.get_room_from_websocket(websocket)
 
@@ -132,7 +206,7 @@ class ChatApp:
 		if not user:
 			await self.send_message_to_websocket(websocket, "User not found.")
 			return
-		await self.send_message_to_room(roomid, message, sender=user)
+		await self.send_message_to_room(roomid, message, sender=user, reply_to_id=reply_to)
 
 	async def send_history_to_websocket(self, websocket: WebSocket, roomid: str):
 		try:
@@ -144,17 +218,36 @@ class ChatApp:
 			try:
 				cursor = conn.cursor()
 				cursor.execute(
-					"SELECT user, message, message_type, date FROM messages WHERE roomid = %s ORDER BY id ASC",
+					"SELECT id, user, message, message_type, date, reply_to FROM messages WHERE roomid = %s ORDER BY id ASC",
 					(roomid,)
 				)
 				messages = []
 				for row in cursor.fetchall():
-					thedate = row[3].timestamp()
+					thedate = row[4].timestamp()
+					reply_to_data = None
+
+					if row[5]:  # reply_to field
+						reply_cursor = conn.cursor()
+						reply_cursor.execute(
+							"SELECT user, message FROM messages WHERE id = %s",
+							(row[5],)
+						)
+						reply_result = reply_cursor.fetchone()
+						if reply_result:
+							reply_to_data = {
+								"id": row[5],
+								"user": reply_result[0],
+								"message": reply_result[1]
+							}
+						reply_cursor.close()
+					
 					messages.append({
-						"user": row[0],
-						"message": row[1],
-						"message_type": row[2],
-						"date": thedate
+						"id": row[0],
+						"user": row[1],
+						"message": row[2],
+						"message_type": row[3],
+						"date": thedate,
+						"reply_to": reply_to_data
 					})
 				
 				data = {
@@ -181,14 +274,34 @@ class ChatApp:
 		except Exception as e:
 			print(f"Error sending message: {e}")
 
-	async def send_message_to_room(self, roomid: str, message: str, sender: str = "system", no_history: bool = False):
+	async def send_message_to_room(self, roomid: str, message: str, sender: str = "system", no_history: bool = False, reply_to_id = None):
 		if roomid in self.active_rooms:
-			data = {
-				"type": "new_message",
-				"user": sender,
-				"message": message,
-				"date": time(),
-			}
+			message_id = None
+			reply_to_data = None
+			
+			if reply_to_id:
+				conn = get_db_connection()
+				if conn:
+					cursor = None
+					try:
+						cursor = conn.cursor()
+						cursor.execute(
+							"SELECT user, message FROM messages WHERE id = %s",
+							(reply_to_id,)
+						)
+						reply_result = cursor.fetchone()
+						if reply_result:
+							reply_to_data = {
+								"id": reply_to_id,
+								"user": reply_result[0],
+								"message": reply_result[1]
+							}
+					except Exception as e:
+						print(f"Error fetching reply message: {e}")
+					finally:
+						if cursor:
+							cursor.close()
+						conn.close()
 			
 			if not no_history:
 				conn = get_db_connection()
@@ -197,16 +310,26 @@ class ChatApp:
 					try:
 						cursor = conn.cursor()
 						cursor.execute(
-							"INSERT INTO messages (roomid, user, message, message_type) VALUES (%s, %s, %s, %s)",
-							(roomid, sender, message, "new_message")
+							"INSERT INTO messages (roomid, user, message, message_type, reply_to) VALUES (%s, %s, %s, %s, %s)",
+							(roomid, sender, message, "new_message", reply_to_id)
 						)
 						conn.commit()
+						message_id = cursor.lastrowid  # id of inserted
 					except Exception as e:
 						print(f"Error saving message to database: {e}")
 					finally:
 						if cursor:
 							cursor.close()
 						conn.close()
+
+			data = {
+				"type": "new_message",
+				"id": message_id,
+				"user": sender,
+				"message": message,
+				"date": time(),
+				"reply_to": reply_to_data
+			}
 
 			for user_data in self.active_rooms[roomid]:
 				websocket = user_data["websocket"]
@@ -265,7 +388,7 @@ async def websocket_endpoint(
 			data = await websocket.receive_text()
 			try:
 				message_data = loads(data)
-				if message_data.get("type") == "send_message":
+				if message_data.get("type") in ["send_message", "watcher_update"]:
 					await chat.handle_message(websocket, message_data)
 			except JSONDecodeError:
 				await chat.send_message_to_websocket(websocket, "Invalid message format")

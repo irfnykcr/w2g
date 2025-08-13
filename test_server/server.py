@@ -301,7 +301,10 @@ async def join(request: Request):
 		return {"status": False, "data": "password is incorrect for user"}
 		
 	user = str(data["userid"])
-	
+	player_status = get_player_status(roomid)
+	uptodate = player_status.get("uptodate", {})
+	if user in uptodate:
+		return {"status": False, "data": "user already joined"}
 	player_status = get_player_status(roomid)
 	uptodate = player_status.get("uptodate", {})
 	uptodate[user] = False
@@ -377,8 +380,7 @@ async def update_url(request: Request):
 		
 		update_player_status(roomid, time=time_data, is_playing=is_playing_data, url=url_data)
 		
-		player_status = get_player_status(roomid)
-		print(player_status)
+		# player_status = get_player_status(roomid)
 		
 		change_updatestatus_forall(roomid, "")
 		return {"status": True, "data": f"updated the video url to: {new_url}"}

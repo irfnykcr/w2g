@@ -15,3 +15,5 @@ node_modules/
 #builds
 dist/
 build/
+
+debug_creds.js

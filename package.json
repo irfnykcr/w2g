@@ -17,9 +17,11 @@
 		"electron-builder": "^26.0.12"
 	},
 	"dependencies": {
+		"@distube/ytdl-core": "^4.16.12",
 		"axios": "^1.9.0",
 		"bcryptjs": "^3.0.2",
-		"keytar": "^7.9.0"
+		"keytar": "^7.9.0",
+		"youtube-dl-exec": "^3.0.24"
 	},
 	"build": {
 		"appId": "com.turkuazz.w2g",

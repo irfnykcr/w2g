@@ -31,7 +31,7 @@
 			<button id="toggle-url-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
 				&times;
 			</button>
-			<div id="url-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300">
+			<div id="url-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
 				<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Watch Video</h2>
 				<div class="flex flex-col gap-4">
 					<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -48,6 +48,13 @@
 					<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
 						watch video
 					</button>
+				</div>
+				
+				<div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-gray-700">
+					<h2 class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Currently Watching</h2>
+					<div id="watchers-list" class="space-y-1 sm:space-y-2 max-h-20 sm:max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-gray-700">
+						<div class="text-gray-500 text-lg">No one is watching</div>
+					</div>
 				</div>
 			</div>
 		</section>
@@ -66,7 +73,24 @@
 				<!-- dynamic -->
 			</div>
 			
+			<!-- reply preview area -->
+			<div id="reply-preview" class="hidden mx-4 sm:mx-6 mb-2 p-3 bg-gray-700 rounded-md border-l-4 border-turkuazz">
+				<div class="flex justify-between items-start">
+					<div class="flex-1">
+						<div class="text-xs text-gray-400 mb-1">Replying to <span id="reply-to-user" class="text-turkuazz font-semibold"></span></div>
+						<div id="reply-to-message" class="text-sm text-gray-300 truncate"></div>
+					</div>
+					<button id="close-reply" class="ml-2 text-gray-400 hover:text-white text-lg leading-none">&times;</button>
+				</div>
+			</div>
+			
 			<div class="flex gap-2 p-4 sm:p-6 pt-4 flex-shrink-0">
+				<button id="gif-picker-btn" class="bg-gray-700 hover:bg-gray-600 text-white p-3 rounded-md transition-colors duration-200 flex items-center justify-center" title="Add GIF or Emoji">
+					<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+						<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+						<path d="M5 6.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m0 0V7a.25.25 0 0 0-.25-.25H3.5a.25.25 0 0 0-.25.25v2.75c0 .138.112.25.25.25h1.25A.25.25 0 0 0 5 9.75V6.25zm7-.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0"/>
+					</svg>
+				</button>
 				<input
 					id="input-chatmessage"
 					type="text"
@@ -77,10 +101,59 @@
 					send
 				</button>
 			</div>
+			
+			<!-- gif picker -->
+			<div id="gif-picker-modal" class="hidden fixed z-50">
+				<div class="bg-dark-card rounded-lg shadow-2xl border border-gray-600 flex flex-col">
+					<!-- tabs -->
+					<div class="flex items-center justify-between p-4 border-b border-gray-700">
+						<div class="flex gap-2">
+							<button id="gif-tab" class="px-3 py-1 rounded-md bg-turkuazz text-dark-bg text-sm font-medium">
+								GIFs
+							</button>
+							<button id="emoji-tab" class="px-3 py-1 rounded-md bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium">
+								😀 Emojis
+							</button>
+						</div>
+						<button id="close-gif-picker" class="text-gray-400 hover:text-white text-xl">×</button>
+					</div>
+					
+					<!-- search -->
+					<div class="p-4 border-b border-gray-700" id="gif-searchdiv">
+						<input 
+							id="gif-search" 
+							type="text" 
+							placeholder="Search GIFs..." 
+							class="w-full p-2 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm"
+						/>
+					</div>
+					
+					<!-- content -->
+					<div class="flex-1 overflow-hidden">
+						<!-- gif -->
+						<div id="gif-content" class="h-full">
+							<div class="p-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
+								<div id="gif-loading" class="text-center py-8 text-gray-400">Loading popular GIFs...</div>
+								<div id="gif-grid" class="grid grid-cols-2 gap-2 hidden"></div>
+							</div>
+						</div>
+						
+						<!-- emoji -->
+						<div id="emoji-content" class="h-full hidden">
+							<div class="p-2 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
+								<div id="emoji-grid" class="grid grid-cols-6 gap-2">
+									<!-- dynamic -->
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
 		</section>
 	</main>
 
 	<script src="../assets/js/headers/header.js" defer></script>
+	<script src="../assets/js/tenor.js" defer></script>
 	<script type="module" src="../assets/js/wss.js" defer></script>
 	<script src="../assets/js/index.js" defer></script>
 </body>

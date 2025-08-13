@@ -1,29 +1,29 @@
-const logger = {
+const loggerIndex = {
 	info: (...args) => {
 		const timestamp = new Date().toISOString()
-		console.log(`[${timestamp}] [INFO]`, ...args)
+		console.log(`[INDEX] [${timestamp}] [INFO]`, ...args)
 	},
 	warn: (...args) => {
 		const timestamp = new Date().toISOString()
-		console.warn(`[${timestamp}] [WARN]`, ...args)
+		console.warn(`[INDEX] [${timestamp}] [WARN]`, ...args)
 	},
 	error: (...args) => {
 		const timestamp = new Date().toISOString()
-		console.error(`[${timestamp}] [ERROR]`, ...args)
+		console.error(`[INDEX] [${timestamp}] [ERROR]`, ...args)
 	},
 	debug: (...args) => {
 		const timestamp = new Date().toISOString()
-		console.log(`[${timestamp}] [DEBUG]`, ...args)
+		console.log(`[INDEX] [${timestamp}] [DEBUG]`, ...args)
 	}
 }
 
-window.electronAPI.onVLCstatus((data) => {
-	logger.debug("VLC Status:", data)
-})
+// window.electronAPI.onVLCstatus((data) => {
+// 	loggerIndex.debug("VLC Status:", data)
+// })
 
-window.electronAPI.onServerStatus((data) => {
-	logger.debug("SERVER Status:", data)
-})
+// window.electronAPI.onServerStatus((data) => {
+// 	loggerIndex.debug("SERVER Status:", data)
+// })
 
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
@@ -39,7 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (videoUrlValue) {
 		await window.electronAPI.setVideoVLC(videoUrlValue)
 	} else {
-		logger.error("Video URL is empty or invalid.")
+		loggerIndex.error("Video URL is empty or invalid.")
 	}
 	})
 
