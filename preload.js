@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	openVLC: (url, currentsec) => ipcRenderer.invoke('open-vlc', url, currentsec),
 	setVideoVLC: (url) => ipcRenderer.invoke('setvideo-vlc', url),
 	getVLCStatus: () => ipcRenderer.invoke('get-vlc-status'),
+	getWatchersStatus: () => ipcRenderer.invoke('get-watchers-status'),
 
 	setUserCreds: (user, userpsw) => ipcRenderer.invoke('set-usercreds', user, userpsw),
 	setRoomCreds: (roomid, roompsw) => ipcRenderer.invoke('set-roomcreds', roomid, roompsw),

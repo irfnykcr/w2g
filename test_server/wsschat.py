@@ -109,6 +109,9 @@ class ChatApp:
 		
 		is_watching = data.get("is_watching", False)
 		provided_imageurl = data.get("imageurl", "")
+		current_time = data.get("current_time", 0)
+		is_playing = data.get("is_playing", False)
+		is_uptodate = data.get("is_uptodate", False)
 		
 		user_imageurl = ""
 		if provided_imageurl:
@@ -138,7 +141,10 @@ class ChatApp:
 		if is_watching:
 			self.room_watchers[roomid].append({
 				"username": user,
-				"imageurl": user_imageurl
+				"imageurl": user_imageurl,
+				"current_time": current_time,
+				"is_playing": is_playing,
+				"is_uptodate": is_uptodate
 			})
 		
 		await self.send_watchers_to_room(roomid)

@@ -17,3 +17,5 @@ dist/
 build/
 
 debug_creds.js
+
+.github

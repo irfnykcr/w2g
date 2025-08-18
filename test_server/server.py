@@ -89,10 +89,10 @@ def get_player_status(roomid: str):
 	global PLAYER_STATUS
 	if roomid not in PLAYER_STATUS:
 		PLAYER_STATUS[roomid] = {
-			"is_playing": {},
-			"url": {},
+			"is_playing": {"user": "", "value": False},
+			"url": {"user": "", "value": ""},
 			"uptodate": {},
-			"time": {}
+			"time": {"user": "", "value": 0}
 		}
 	return PLAYER_STATUS[roomid]
 
@@ -100,10 +100,10 @@ def update_player_status(roomid: str, **kwargs):
 	global PLAYER_STATUS
 	if roomid not in PLAYER_STATUS:
 		PLAYER_STATUS[roomid] = {
-			"is_playing": {},
-			"url": {},
+			"is_playing": {"user": "", "value": False},
+			"url": {"user": "", "value": ""},
 			"uptodate": {},
-			"time": {}
+			"time": {"user": "", "value": 0}
 		}
 	
 	for field, value in kwargs.items():
@@ -129,7 +129,7 @@ def save_player_status_to_db():
 
 			cursor.execute("""
 				UPDATE player_status 
-				SET is_playing = %s, url = %s, time = %s,
+				SET is_playing = %s, url = %s, time = %s
 				WHERE roomid = %s
 			""", (is_playing, url, time_data, roomid))
 		conn.commit()
@@ -158,10 +158,10 @@ def load_player_status_from_db():
 		
 		for roomid, is_playing, url, time_data in results:
 			PLAYER_STATUS[roomid] = {
-				"is_playing": json.loads(is_playing) if is_playing else {},
-				"url": json.loads(url) if url else {},
-				"uptodate": {},  # Reset uptodate on startup
-				"time": json.loads(time_data) if time_data else {}
+				"is_playing": json.loads(is_playing) if is_playing else {"user": "", "value": False},
+				"url": json.loads(url) if url else {"user": "", "value": ""},
+				"uptodate": {},
+				"time": json.loads(time_data) if time_data else {"user": "", "value": 0}
 			}
 		
 		print(f"Loaded player status for {len(PLAYER_STATUS)} rooms from database")
@@ -223,10 +223,12 @@ def change_updatestatus_forall(roomid: str, except_user: str) -> bool:
 		return False
 		
 	uptodate = player_status["uptodate"]
+	
 	for user in uptodate:
 		if user == except_user: 
-			continue
-		uptodate[user] = False
+			uptodate[user] = True
+		else:
+			uptodate[user] = False
 	
 	update_player_status(roomid, uptodate=uptodate)
 	return True
@@ -235,7 +237,9 @@ def check_ifcan_update(roomid: str, user: str) -> bool:
 	player_status = get_player_status(roomid)
 	if not player_status or "uptodate" not in player_status:
 		return False
-	return player_status["uptodate"].get(user, False) == True
+	uptodate = player_status["uptodate"]
+
+	return uptodate.get(user, False)
 
 
 @app.post('/update_isplaying')
@@ -260,9 +264,11 @@ async def update_isplaying(request: Request):
 		time_data = {"user": user, "value": new_time}
 		
 		update_player_status(roomid, is_playing=is_playing_data, time=time_data)
+
 		change_updatestatus_forall(roomid, user)
+		
 		return {"status": True, "data": f"updated the video is_playing to: {_is_playing}"}
-	return {"status": False, "error": "invalid or missing 'is_playing' parameter"}
+	return {"status": False, "error": "user not authorized to update"}
 
 @app.post('/update_time')
 async def update_time(request: Request):
@@ -283,9 +289,11 @@ async def update_time(request: Request):
 	if check_ifcan_update(roomid, user):
 		time_data = {"user": user, "value": new_time}
 		update_player_status(roomid, time=time_data)
+
 		change_updatestatus_forall(roomid, user)
+		
 		return {"status": True, "data": f"updated the video time to: {new_time}"}
-	return {"status": False, "error": "invalid or missing 'new_time' parameter"}
+	return {"status": False, "error": "user not authorized to update"}
 
 @app.post('/join')
 async def join(request: Request):
@@ -380,11 +388,9 @@ async def update_url(request: Request):
 		
 		update_player_status(roomid, time=time_data, is_playing=is_playing_data, url=url_data)
 		
-		# player_status = get_player_status(roomid)
-		
-		change_updatestatus_forall(roomid, "")
+		change_updatestatus_forall(roomid, user)
 		return {"status": True, "data": f"updated the video url to: {new_url}"}
-	return {"status": False, "error": "invalid or missing 'new_url' parameter"}
+	return {"status": False, "error": "user not authorized to update"}
 
 
 # !!! JUST FOR DEV !!!
