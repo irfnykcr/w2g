@@ -30,17 +30,26 @@ document.addEventListener("DOMContentLoaded", () => {
 	const setthevideo = document.querySelector("#set-thevideo")
 	const playthevideo = document.querySelector("#play-thevideo")
 
+
 	playthevideo.addEventListener("click", async () => {
-		await window.electronAPI.openVLC()
+		try {
+			await window.electronAPI.openVLC()
+		} catch (error) {
+			loggerIndex.error("Error opening VLC:", error)
+		}
 	})
 
 	setthevideo.addEventListener("click", async () => {
-	const videoUrlValue = videourl.value.trim()
-	if (videoUrlValue) {
-		await window.electronAPI.setVideoVLC(videoUrlValue)
-	} else {
-		loggerIndex.error("Video URL is empty or invalid.")
-	}
+		const videoUrlValue = videourl.value.trim()
+		if (videoUrlValue) {
+			try {
+				await window.electronAPI.setVideoVLC(videoUrlValue)
+			} catch (error) {
+				loggerIndex.error("Error setting video:", error)
+			}
+		} else {
+			loggerIndex.error("Video URL is empty or invalid.")
+		}
 	})
 
 	const main = document.querySelector("main")

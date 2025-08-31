@@ -199,6 +199,12 @@ class ChatApp:
 		if data.get("type") == "watcher_update":
 			await self.handle_watcher_update(websocket, data)
 			return
+		elif data.get("type") == "new_reaction":
+			await self.handle_reaction(websocket, data)
+			return
+		elif data.get("type") == "delete_message":
+			await self.handle_message_deletion(websocket, data)
+			return
 			
 		message = data.get("message")
 		reply_to = data.get("reply_to")
@@ -214,6 +220,166 @@ class ChatApp:
 			return
 		await self.send_message_to_room(roomid, message, sender=user, reply_to_id=reply_to)
 
+	async def handle_reaction(self, websocket: WebSocket, data):
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		
+		if not roomid or not user:
+			return
+			
+		emoji = data.get("emoji")
+		reply_to = data.get("reply_to")
+		
+		if not emoji or not reply_to:
+			return
+			
+		conn = get_db_connection()
+		if not conn:
+			return
+			
+		cursor = None
+		try:
+			cursor = conn.cursor()
+			cursor.execute(
+				"SELECT id, message, removed FROM messages WHERE roomid = %s AND user = %s AND message_type = 'new_reaction' AND reply_to = %s",
+				(roomid, user, reply_to)
+			)
+			existing_reaction = cursor.fetchone()
+			
+			if existing_reaction:
+				reaction_id = existing_reaction[0]
+				existing_emoji = existing_reaction[1]
+				is_removed = existing_reaction[2]
+				
+				if existing_emoji == emoji and not is_removed:
+					cursor.execute(
+						"UPDATE messages SET removed = 1 WHERE id = %s",
+						(reaction_id,)
+					)
+					conn.commit()
+					
+					data = {
+						"type": "reaction_removed",
+						"id": reaction_id,
+						"user": user,
+						"message": emoji,
+						"reply_to": reply_to,
+						"date": time(),
+						"message_type": "reaction_removed"
+					}
+					
+					if roomid in self.active_rooms:
+						for user_data in self.active_rooms[roomid]:
+							websocket_user = user_data["websocket"]
+							try:
+								await websocket_user.send_text(dumps(data))
+							except Exception as e:
+								print(f"Error sending reaction removal to {user_data['username']}: {e}")
+					return
+				else:
+					cursor.execute(
+						"UPDATE messages SET message = %s, removed = 0 WHERE id = %s",
+						(emoji, reaction_id)
+					)
+			else:
+				cursor.execute(
+					"INSERT INTO messages (roomid, user, message, message_type, reply_to) VALUES (%s, %s, %s, %s, %s)",
+					(roomid, user, emoji, "new_reaction", reply_to)
+				)
+				reaction_id = cursor.lastrowid
+			
+			conn.commit()
+			
+			data = {
+				"type": "new_reaction",
+				"id": reaction_id,
+				"user": user,
+				"message": emoji,
+				"reply_to": reply_to,
+				"date": time(),
+				"message_type": "new_reaction"
+			}
+			
+			if roomid in self.active_rooms:
+				for user_data in self.active_rooms[roomid]:
+					websocket_user = user_data["websocket"]
+					try:
+						await websocket_user.send_text(dumps(data))
+					except Exception as e:
+						print(f"Error sending reaction to {user_data['username']}: {e}")
+		except Exception as e:
+			print(f"Error handling reaction: {e}")
+		finally:
+			if cursor:
+				cursor.close()
+			conn.close()
+
+	async def handle_message_deletion(self, websocket: WebSocket, data):
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		
+		if not roomid or not user:
+			return
+			
+		message_id = data.get("message_id")
+		
+		if not message_id:
+			return
+			
+		conn = get_db_connection()
+		if not conn:
+			return
+			
+		cursor = None
+		try:
+			cursor = conn.cursor()
+			cursor.execute(
+				"SELECT user, removed FROM messages WHERE id = %s AND roomid = %s",
+				(message_id, roomid)
+			)
+			result = cursor.fetchone()
+			if not result:
+				return
+			message_owner, is_removed = result
+			
+			if message_owner != user:
+				return
+			if is_removed:
+				return
+			
+			cursor.execute(
+				"UPDATE messages SET removed = 1 WHERE id = %s",
+				(message_id,)
+			)
+			
+			cursor.execute(
+				"UPDATE messages SET removed = 1 WHERE reply_to = %s AND message_type = 'new_reaction'",
+				(message_id,)
+			)
+			
+			conn.commit()
+			
+			data = {
+				"type": "message_deleted",
+				"message_id": message_id,
+				"user": user,
+				"date": time()
+			}
+			
+			if roomid in self.active_rooms:
+				for user_data in self.active_rooms[roomid]:
+					websocket_user = user_data["websocket"]
+					try:
+						await websocket_user.send_text(dumps(data))
+					except Exception as e:
+						print(f"Error sending message deletion to {user_data['username']}: {e}")
+		except Exception as e:
+			print(f"Error handling message deletion: {e}")
+		finally:
+			if cursor:
+				cursor.close()
+			conn.close()
+
 	async def send_history_to_websocket(self, websocket: WebSocket, roomid: str):
 		try:
 			conn = get_db_connection()
@@ -224,7 +390,7 @@ class ChatApp:
 			try:
 				cursor = conn.cursor()
 				cursor.execute(
-					"SELECT id, user, message, message_type, date, reply_to FROM messages WHERE roomid = %s ORDER BY id ASC",
+					"SELECT id, user, message, message_type, date, reply_to, removed FROM messages WHERE roomid = %s ORDER BY id ASC",
 					(roomid,)
 				)
 				messages = []
@@ -232,19 +398,28 @@ class ChatApp:
 					thedate = row[4].timestamp()
 					reply_to_data = None
 
-					if row[5]:  # reply_to field
+					if row[5]: # reply_to field
 						reply_cursor = conn.cursor()
 						reply_cursor.execute(
-							"SELECT user, message FROM messages WHERE id = %s",
+							"SELECT user, message, removed FROM messages WHERE id = %s",
 							(row[5],)
 						)
 						reply_result = reply_cursor.fetchone()
 						if reply_result:
-							reply_to_data = {
-								"id": row[5],
-								"user": reply_result[0],
-								"message": reply_result[1]
-							}
+							if reply_result[2]: # if message is removed
+								reply_to_data = {
+									"id": row[5],
+									"user": reply_result[0],
+									"message": None,
+									"is_deleted": True
+								}
+							else:
+								reply_to_data = {
+									"id": row[5],
+									"user": reply_result[0],
+									"message": reply_result[1],
+									"is_deleted": False
+								}
 						reply_cursor.close()
 					
 					messages.append({
@@ -253,7 +428,8 @@ class ChatApp:
 						"message": row[2],
 						"message_type": row[3],
 						"date": thedate,
-						"reply_to": reply_to_data
+						"reply_to": reply_to_data if not bool(row[6]) else None, # None if message is removed
+						"is_deleted": bool(row[6]) # removed column
 					})
 				
 				data = {
@@ -292,16 +468,25 @@ class ChatApp:
 					try:
 						cursor = conn.cursor()
 						cursor.execute(
-							"SELECT user, message FROM messages WHERE id = %s",
+							"SELECT user, message, removed FROM messages WHERE id = %s",
 							(reply_to_id,)
 						)
 						reply_result = cursor.fetchone()
 						if reply_result:
-							reply_to_data = {
-								"id": reply_to_id,
-								"user": reply_result[0],
-								"message": reply_result[1]
-							}
+							if reply_result[2]: # if message is removed
+								reply_to_data = {
+									"id": reply_to_id,
+									"user": reply_result[0],
+									"message": None,
+									"is_deleted": True
+								}
+							else:
+								reply_to_data = {
+									"id": reply_to_id,
+									"user": reply_result[0],
+									"message": reply_result[1],
+									"is_deleted": False
+								}
 					except Exception as e:
 						print(f"Error fetching reply message: {e}")
 					finally:
@@ -320,7 +505,7 @@ class ChatApp:
 							(roomid, sender, message, "new_message", reply_to_id)
 						)
 						conn.commit()
-						message_id = cursor.lastrowid  # id of inserted
+						message_id = cursor.lastrowid # id of inserted
 					except Exception as e:
 						print(f"Error saving message to database: {e}")
 					finally:
@@ -394,7 +579,7 @@ async def websocket_endpoint(
 			data = await websocket.receive_text()
 			try:
 				message_data = loads(data)
-				if message_data.get("type") in ["send_message", "watcher_update"]:
+				if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message"]:
 					await chat.handle_message(websocket, message_data)
 			except JSONDecodeError:
 				await chat.send_message_to_websocket(websocket, "Invalid message format")

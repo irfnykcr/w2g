@@ -16,6 +16,9 @@ node_modules/
 dist/
 build/
 
+#cache
+__pycache__
+
 debug_creds.js
 
 .github

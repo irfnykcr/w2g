@@ -26,7 +26,10 @@ let replyState = {
 }
 
 let messagesById = new Map()
+let messageReactions = new Map()
 let ws
+let USER 
+
 
 function getUserImageUrl() {
 	const messages = Array.from(messagesById.values())
@@ -108,6 +111,292 @@ function scrollToMessage(messageId) {
             messageElement.style.backgroundColor = ''
         }, 2000)
     }
+}
+
+function sendReaction(messageId, emoji) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const data = {
+            type: "new_reaction",
+            emoji: emoji,
+            reply_to: messageId
+        }
+        ws.send(JSON.stringify(data))
+        loggerWss.debug(`Sent reaction ${emoji} to message ${messageId}`)
+    }
+}
+
+function handleReactionRemoval(data) {
+    const targetMessageId = data.reply_to
+    const emoji = data.message
+    const user = data.user
+    
+    if (!messageReactions.has(targetMessageId)) {
+        return
+    }
+    
+    const reactions = messageReactions.get(targetMessageId)
+    
+    if (reactions[emoji]) {
+        const userIndex = reactions[emoji].users.indexOf(user)
+        if (userIndex > -1) {
+            reactions[emoji].users.splice(userIndex, 1)
+            reactions[emoji].count--
+            
+            if (reactions[emoji].count === 0) {
+                delete reactions[emoji]
+            }
+        }
+    }
+    
+    updateMessageReactions(targetMessageId)
+    loggerWss.debug(`Removed reaction ${emoji} from user ${user} on message ${targetMessageId}`)
+}
+
+function showMessageContextMenu(event, messageId, messageUser, messageText, messageElement) {
+    const existingMenu = document.querySelector('.message-context-menu')
+    if (existingMenu) {
+        existingMenu.remove()
+    }
+    
+    const isDeleted = messageElement.style.opacity === '0.5' && messageElement.style.filter === 'grayscale(100%)'
+    
+    const menu = document.createElement('div')
+    menu.className = 'message-context-menu absolute bg-dark-card border border-gray-600 rounded-lg py-1 z-50 shadow-lg min-w-32'
+    
+    if (!isDeleted) {
+        const replyItem = document.createElement('div')
+        replyItem.className = 'px-3 py-2 text-sm text-gray-300 hover:bg-dark-hover cursor-pointer flex items-center gap-2'
+        replyItem.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.3a.5.5 0 0 0 .5.5c.667 0 2.013.005 3.3.822.984.624 1.99 1.76 2.595 3.876-1.02-.983-2.185-1.516-3.205-1.799a8.7 8.7 0 0 0-1.921-.306 7 7 0 0 0-.798.008h-.013l-.005.001h-.001L7.3 9.9l-.05-.498a.5.5 0 0 0-.45.498v1.153c0 .108-.11.176-.202.134L2.614 8.254l-.042-.028a.147.147 0 0 1 0-.252l.042-.028zM7.8 10.386q.103 0 .223.006c.434.02 1.034.086 1.7.271 1.326.368 2.896 1.202 3.94 3.08a.5.5 0 0 0 .933-.305c-.464-3.71-1.886-5.662-3.46-6.60-1.245-.79-2.527-.942-3.336-.971v-.66a1.144 1.144 0 0 0-1.767-.96l-3.994 2.94a1.147 1.147 0 0 0 0 1.946l3.994 2.94a1.144 1.144 0 0 0 1.767-.96z"/>
+            </svg>
+            Reply
+        `
+        replyItem.addEventListener('click', () => {
+            setReplyMode(messageId, messageUser, messageText, messageElement)
+            menu.remove()
+        })
+        menu.appendChild(replyItem)
+    }
+    
+    if (messageUser === USER && !isDeleted) {
+        if (menu.children.length > 0) {
+            const separator = document.createElement('div')
+            separator.className = 'border-t border-gray-600 my-1'
+            menu.appendChild(separator)
+        }
+        
+        const deleteItem = document.createElement('div')
+        deleteItem.className = 'px-3 py-2 text-sm text-red-400 hover:bg-dark-hover cursor-pointer flex items-center gap-2'
+        deleteItem.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"/>
+                <path d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"/>
+            </svg>
+            Delete
+        `
+        deleteItem.addEventListener('click', () => {
+            deleteMessage(messageId)
+            menu.remove()
+        })
+        menu.appendChild(deleteItem)
+    }
+    
+    if (menu.children.length === 0) {
+        return
+    }
+    
+    menu.style.position = 'fixed'
+    menu.style.left = `${event.clientX}px`
+    menu.style.top = `${event.clientY}px`
+    
+    document.body.appendChild(menu)
+    
+    const closeMenu = (e) => {
+        if (!menu.contains(e.target)) {
+            menu.remove()
+            document.removeEventListener('click', closeMenu)
+        }
+    }
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeMenu)
+    }, 100)
+    
+    setTimeout(() => {
+        const menuRect = menu.getBoundingClientRect()
+        if (menuRect.bottom > window.innerHeight) {
+            menu.style.top = `${event.clientY - menuRect.height}px`
+        }
+        if (menuRect.right > window.innerWidth) {
+            menu.style.left = `${event.clientX - menuRect.width}px`
+        }
+    }, 10)
+}
+
+function deleteMessage(messageId) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        const data = {
+            type: "delete_message",
+            message_id: messageId
+        }
+        ws.send(JSON.stringify(data))
+        loggerWss.debug(`Sent delete request for message ${messageId}`)
+    }
+}
+
+function handleMessageDeletion(data) {
+    const messageId = data.message_id
+    const messageElement = messagesById.get(messageId)
+    
+    if (messageElement) {
+        messageElement.style.opacity = '0.5'
+        messageElement.style.filter = 'grayscale(100%)'
+        
+        const messageContent = messageElement.querySelector('.text-gray-300.text-sm.break-words')
+        if (messageContent) {
+            messageContent.innerHTML = '<em class="text-gray-500">This message was deleted</em>'
+        } else {
+            const fallbackContent = messageElement.querySelector('.text-gray-300')
+            if (fallbackContent) {
+                fallbackContent.innerHTML = '<em class="text-gray-500">This message was deleted</em>'
+            }
+        }
+        
+        const replyBtn = messageElement.querySelector('.reply-btn')
+        if (replyBtn) {
+            replyBtn.remove()
+        }
+        
+        const actionsContainer = messageElement.querySelector('.flex.justify-end')
+        if (actionsContainer) {
+            actionsContainer.remove()
+        }
+        
+        messageElement.removeEventListener('dblclick', () => {})
+        messageElement.removeEventListener('contextmenu', () => {})
+        
+        if (messageReactions.has(messageId)) {
+            messageReactions.delete(messageId)
+            const reactionsContainer = messageElement.querySelector('.reactions-container')
+            if (reactionsContainer) {
+                reactionsContainer.remove()
+            }
+        }
+
+        messagesById.forEach((element, id) => {
+            const replyDiv = element.querySelector('[onclick*="scrollToMessage(' + messageId + ')"]')
+            if (replyDiv) {
+                updateReplyToDeletedMessage(replyDiv)
+            }
+        })
+        
+        loggerWss.debug(`Message ${messageId} marked as deleted`)
+    }
+}
+
+function updateReplyToDeletedMessage(replyDiv) {
+    const replyMessageDiv = replyDiv.querySelector('.text-gray-300')
+    if (replyMessageDiv) {
+        replyMessageDiv.innerHTML = '<em class="text-gray-500">Original message was deleted</em>'
+    }
+    
+    replyDiv.removeAttribute('onclick')
+    replyDiv.style.cursor = 'default'
+    replyDiv.title = 'Original message was deleted'
+}
+
+function updateMessageReactions(messageId) {
+    const messageElement = messagesById.get(messageId)
+    if (!messageElement) return
+    
+    const reactions = messageReactions.get(messageId) || {}
+    let reactionsContainer = messageElement.querySelector('.reactions-container')
+    
+    if (Object.keys(reactions).length === 0) {
+        if (reactionsContainer) {
+            reactionsContainer.remove()
+        }
+        return
+    }
+    
+    if (!reactionsContainer) {
+        reactionsContainer = document.createElement('div')
+        reactionsContainer.className = 'reactions-container flex flex-wrap gap-1'
+        
+        const emojiButtonContainer = messageElement.querySelector('.reaction-add-btn')?.parentNode
+        if (emojiButtonContainer) {
+            emojiButtonContainer.insertBefore(reactionsContainer, emojiButtonContainer.firstChild)
+        } else {
+            messageElement.appendChild(reactionsContainer)
+        }
+    }
+    
+    reactionsContainer.innerHTML = ''
+    
+    Object.entries(reactions).forEach(([emoji, data]) => {
+        const reactionBtn = document.createElement('button')
+        reactionBtn.className = 'reaction-btn bg-dark-card hover:bg-dark-hover border border-gray-600 rounded-full px-2 py-1 text-xs flex items-center gap-1 transition-colors duration-200'
+        reactionBtn.innerHTML = `<span>${emoji}</span><span class="text-gray-400">${data.count}</span>`
+        reactionBtn.title = `${data.users.join(', ')} reacted with ${emoji}`
+        
+        reactionBtn.addEventListener('click', () => {
+            sendReaction(messageId, emoji)
+        })
+        
+        reactionsContainer.appendChild(reactionBtn)
+    })
+}
+
+function showReactionModal(button, messageId) {
+    const existingModal = document.querySelector('.reaction-modal')
+    if (existingModal) {
+        existingModal.remove()
+    }
+    
+    const modal = document.createElement('div')
+    modal.className = 'reaction-modal absolute bg-dark-card border border-gray-600 rounded-lg p-2 flex gap-2 z-50 shadow-lg'
+    
+    const emojis = ['😄', '😍', '😔', '😎', '👍', '👎', '💗']
+    
+    emojis.forEach(emoji => {
+        const emojiBtn = document.createElement('button')
+        emojiBtn.className = 'hover:bg-dark-hover rounded p-1 transition-colors duration-200 text-lg'
+        emojiBtn.textContent = emoji
+        emojiBtn.addEventListener('click', () => {
+            sendReaction(messageId, emoji)
+            modal.remove()
+        })
+        modal.appendChild(emojiBtn)
+    })
+    
+    const buttonRect = button.getBoundingClientRect()
+    modal.style.position = 'fixed'
+    modal.style.top = `${buttonRect.top - modal.offsetHeight - 10}px`
+    modal.style.left = `${buttonRect.left}px`
+    
+    document.body.appendChild(modal)
+    
+    const closeModal = (e) => {
+        if (!modal.contains(e.target) && e.target !== button) {
+            modal.remove()
+            document.removeEventListener('click', closeModal)
+        }
+    }
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeModal)
+    }, 100)
+    
+    setTimeout(() => {
+        const modalRect = modal.getBoundingClientRect()
+        if (modalRect.bottom > window.innerHeight) {
+            modal.style.top = `${buttonRect.bottom + 10}px`
+        }
+        if (modalRect.right > window.innerWidth) {
+            modal.style.left = `${window.innerWidth - modalRect.width - 10}px`
+        }
+    }, 10)
 }
 
 function updateWatchersList(watchers) {
@@ -265,7 +554,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
 	const SERVER_ENDPOINT = await window.electronAPI.getServerEndpoint()
-	let USER 
 	let USER_PSW
 	await window.electronAPI.getUser().then((r)=>{
 		loggerWss.debug(r)
@@ -337,16 +625,44 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 		socket.onmessage = (r) => {
 			const data = JSON.parse(r.data)
-			loggerWss.debug("Message received", data)
+			// loggerWss.debug("Message received", data)
 
 			if (data.type == "room_info") {
 				chatRoomName.innerHTML = `Chat - ${data.room_name}`
 				inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
 			} else if (data.type == "new_message") {
 				addMessage(data)
+			} else if (data.type == "new_reaction") {
+				addMessage(data)
+			} else if (data.type == "reaction_removed") {
+				handleReactionRemoval(data)
+			} else if (data.type == "message_deleted") {
+				handleMessageDeletion(data)
 			} else if (data.type == "room_history") {
 				data.messages.forEach((message) => {
+					if (message.message_type === "new_reaction") {
+						const targetMessageId = message.reply_to?.id
+						if (targetMessageId) {
+							if (!messageReactions.has(targetMessageId)) {
+								messageReactions.set(targetMessageId, {})
+							}
+							
+							const reactions = messageReactions.get(targetMessageId)
+							const emoji = message.message
+							const user = message.user
+							
+							if (!reactions[emoji]) {
+								reactions[emoji] = { users: [], count: 0 }
+							}
+							reactions[emoji].users.push(user)
+							reactions[emoji].count++
+						}
+					}
 					addMessage(message)
+				})
+				
+				messageReactions.forEach((reactions, messageId) => {
+					updateMessageReactions(messageId)
 				})
 			} else if (data.type == "watchers_update") {
 				updateWatchersList(data.watchers)
@@ -398,23 +714,77 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const messageId = data.id
 		const user = data.user
 		const text = data.message
+		const messageType = data.message_type || "new_message"
+		const isDeleted = data.is_deleted || false
+		
+		if (messageType != "new_message"){
+			loggerWss.debug(messageType)
+		}
 		const date = new Date(data.date * 1000).toLocaleString()
 		const replyTo = data.reply_to || null
 
+		if (messageType === "new_reaction") {
+			const targetMessageId = data.reply_to
+			const emoji = data.message
+			
+			if (!messageReactions.has(targetMessageId)) {
+				messageReactions.set(targetMessageId, {})
+			}
+			
+			const reactions = messageReactions.get(targetMessageId)
+			
+			let userAlreadyReacted = false
+			Object.keys(reactions).forEach(existingEmoji => {
+				const userIndex = reactions[existingEmoji].users.indexOf(user)
+				if (userIndex > -1) {
+					reactions[existingEmoji].users.splice(userIndex, 1)
+					reactions[existingEmoji].count--
+					if (reactions[existingEmoji].count === 0) {
+						delete reactions[existingEmoji]
+					}
+					if (existingEmoji === emoji) {
+						userAlreadyReacted = true
+					}
+				}
+			})
+			
+			if (!userAlreadyReacted) {
+				if (!reactions[emoji]) {
+					reactions[emoji] = { users: [], count: 0 }
+				}
+				reactions[emoji].users.push(user)
+				reactions[emoji].count++
+			}
+			
+			updateMessageReactions(targetMessageId)
+			return
+		}
+
 		const messageDiv = document.createElement("div")
-		messageDiv.className = "mb-3 p-3 bg-dark-hover rounded-md border-l-4 border-turkuazz"
+		messageDiv.className = "mb-3 p-3 bg-dark-hover rounded-md border-l-4 border-turkuazz message-container"
 		messageDiv.setAttribute('data-message-id', messageId)
+		messageDiv.setAttribute('data-message-user', user)
 		
 		let replyContent = ''
 		if (replyTo) {
-			replyContent = `
-				<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
-					 onclick="scrollToMessage(${replyTo.id})" 
-					 title="Click to scroll to original message">
-					<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
-					<div class="text-gray-300 mt-1">${replyTo.message}</div>
-				</div>
-			`
+			if (replyTo.is_deleted) {
+				replyContent = `
+					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs" 
+						 title="Original message was deleted">
+						<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-500 mt-1"><em>Original message was deleted</em></div>
+					</div>
+				`
+			} else {
+				replyContent = `
+					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
+						 onclick="scrollToMessage(${replyTo.id})" 
+						 title="Click to scroll to original message">
+						<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-300 mt-1">${replyTo.message}</div>
+					</div>
+				`
+			}
 		}
 
 		const processedContent = window.processMessageContent ? window.processMessageContent(text) : text
@@ -423,11 +793,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 			${replyContent}
 			<div class="flex justify-between items-start mb-2">
 				<span class="font-semibold ${user === "system" ? "text-admin" : "text-turkuazz"} text-sm break-words">${user}</span>
-				<div class="flex items-center gap-2 text-xs text-gray-500 ml-2 flex-shrink-0">
+				<div class="message-actions flex items-center gap-2 text-xs text-gray-500 ml-2 flex-shrink-0">
 					<span>${date}</span>
 					${user !== "system" && messageId ?
-						`<button class="reply-btn hover:text-dark-turkuazz text-turkuazz transition-colors duration-200" title="Reply">
-							<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" class="bi bi-reply" viewBox="0 0 16 16">
+						`<button class="reply-btn hover:text-turkuazz transition-colors duration-200" title="Reply">
+							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-reply" viewBox="0 0 16 16">
 								<path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.3a.5.5 0 0 0 .5.5c.667 0 2.013.005 3.3.822.984.624 1.99 1.76 2.595 3.876-1.02-.983-2.185-1.516-3.205-1.799a8.7 8.7 0 0 0-1.921-.306 7 7 0 0 0-.798.008h-.013l-.005.001h-.001L7.3 9.9l-.05-.498a.5.5 0 0 0-.45.498v1.153c0 .108-.11.176-.202.134L2.614 8.254l-.042-.028a.147.147 0 0 1 0-.252l.042-.028zM7.8 10.386q.103 0 .223.006c.434.02 1.034.086 1.7.271 1.326.368 2.896 1.202 3.94 3.08a.5.5 0 0 0 .933-.305c-.464-3.71-1.886-5.662-3.46-6.66-1.245-.79-2.527-.942-3.336-.971v-.66a1.144 1.144 0 0 0-1.767-.96l-3.994 2.94a1.147 1.147 0 0 0 0 1.946l3.994 2.94a1.144 1.144 0 0 0 1.767-.96z"/>
 							</svg>
 						</button>`
@@ -435,6 +805,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 				</div>
 			</div>
 			<div class="text-gray-300 text-sm break-words">${processedContent}</div>
+			${user !== "system" && messageId ?
+				`<div class="flex justify-end gap-2">
+					<button class="reaction-add-btn hover:text-turkuazz transition-colors duration-200 opacity-70 hover:opacity-100" title="Add reaction">
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+							<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+							<path d="M4.285 9.567a.5.5 0 0 1 .683.183A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0 3.032-1.75.5.5 0 1 1 .866.5A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1-3.898-2.25.5.5 0 0 1 .183-.683M7 6.5C7 7.328 6.552 8 6 8s-1-.672-1-1.5S5.448 5 6 5s1 .672 1 1.5m4 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S9.448 5 10 5s1 .672 1 1.5"/>
+						</svg>
+					</button>
+				</div>`
+			: ''}
 		`
 
 		if (messageId) {
@@ -442,15 +822,57 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		if (user !== "system" && messageId) {
+			messageDiv.addEventListener('dblclick', () => {
+				const isDeleted = messageDiv.style.opacity === '0.5' && messageDiv.style.filter === 'grayscale(100%)'
+				if (!isDeleted) {
+					setReplyMode(messageId, user, text, messageDiv)
+				}
+			})
+
+			messageDiv.addEventListener('contextmenu', (e) => {
+				e.preventDefault()
+				showMessageContextMenu(e, messageId, user, text, messageDiv)
+			})
+
 			const replyBtn = messageDiv.querySelector('.reply-btn')
 			if (replyBtn) {
 				replyBtn.addEventListener('click', () => {
 					setReplyMode(messageId, user, text, messageDiv)
 				})
 			}
+			
+			const reactionBtn = messageDiv.querySelector('.reaction-add-btn')
+			if (reactionBtn) {
+				reactionBtn.addEventListener('click', (e) => {
+					e.stopPropagation()
+					showReactionModal(reactionBtn, messageId)
+				})
+			}
 		}
 
 		messages.appendChild(messageDiv)
+		
+		// deleted styling
+		if (isDeleted) {
+			messageDiv.style.opacity = '0.5'
+			messageDiv.style.filter = 'grayscale(100%)'
+			
+			const messageContent = messageDiv.querySelector('.text-gray-300.text-sm.break-words')
+			if (messageContent) {
+				messageContent.innerHTML = '<em class="text-gray-500">This message was deleted</em>'
+			}
+			
+			const replyBtn = messageDiv.querySelector('.reply-btn')
+			if (replyBtn) {
+				replyBtn.remove()
+			}
+			
+			const actionsContainer = messageDiv.querySelector('.flex.justify-end.gap-2')
+			if (actionsContainer) {
+				actionsContainer.remove()
+			}
+		}
+		
 		messages.scrollTop = messages.scrollHeight
 	}
 
@@ -500,6 +922,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const isClosed = data.status === 'closed' || data.status === 'error' || data.status === 'stopped'
 		
 		lastVLCData = data
+		loggerWss.debug('VLC status received:', data)
 		
 		if (isClosed && isCurrentlyWatching) {
 			isCurrentlyWatching = false
@@ -507,6 +930,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			loggerWss.info('VLC closed, removing from watchers')
 		} else if (isWatching !== isCurrentlyWatching) {
 			isCurrentlyWatching = isWatching
+			loggerWss.info('Watcher status changed to:', isWatching)
 			
 			if (isWatching) {
 				const detailedInfo = await getDetailedWatcherInfo()
@@ -517,9 +941,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 					data.isPlaying || false,
 					detailedInfo.is_uptodate
 				)
+				loggerWss.info('Sent watcher update - watching:', detailedInfo)
 			} else {
 				sendWatcherUpdate(false)
+				loggerWss.info('Sent watcher update - not watching')
 			}
+		} else if (isWatching) {
+			const detailedInfo = await getDetailedWatcherInfo()
+			sendWatcherUpdate(
+				true, 
+				'', 
+				detailedInfo.current_time,
+				data.isPlaying || false,
+				detailedInfo.is_uptodate
+			)
 		}
 	})
 
@@ -535,7 +970,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 					detailedInfo.is_playing,
 					detailedInfo.is_uptodate
 				)
-			}, 3000)
+			}, 2000)
 		})
 	}
 
@@ -553,7 +988,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 				detailedInfo.is_uptodate
 			)
 		}
-	}, 3000)
+	}, 2000)
 	
 	window.addEventListener('beforeunload', () => {
 		if (watcherUpdateInterval) {

@@ -33,21 +33,33 @@
 			</button>
 			<div id="url-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
 				<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Watch Video</h2>
-				<div class="flex flex-col gap-4">
-					<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-						<input
-							id="urlof-thevideo"
-							type="text"
-							placeholder="Enter video URL"
-							class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
-						/>
-						<button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-3 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
-							set video
+				<div class="relative">
+					<!-- loading overlay for input/buttons area only -->
+					<div id="video-loading-overlay" class="absolute inset-0 bg-dark-card bg-opacity-90 flex flex-col items-center justify-center z-20 rounded-md hidden">
+						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-turkuazz mb-3"></div>
+						<p class="text-turkuazz font-medium text-center text-sm">
+							<span id="loading-text">Setting up video...</span>
+						</p>
+						<p class="text-gray-400 text-xs text-center mt-1">
+							This may take a moment
+						</p>
+					</div>
+					<div class="flex flex-col gap-4">
+						<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+							<input
+								id="urlof-thevideo"
+								type="text"
+								placeholder="Enter video URL"
+								class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+							/>
+							<button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-3 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+								set video
+							</button>
+						</div>
+						<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
+							watch video
 						</button>
 					</div>
-					<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
-						watch video
-					</button>
 				</div>
 				
 				<div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-gray-700">

@@ -45,6 +45,33 @@
   }
 }
 
+.reaction-modal {
+  animation: reactionModalFadeIn 0.15s ease-out;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+@keyframes reactionModalFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.reaction-btn {
+  transition: all 0.2s ease-in-out;
+}
+
+.reaction-btn:hover {
+  background-color: #2d3748 !important;
+  border-color: #00b894 !important;
+  transform: scale(1.05);
+}
+
+
 .transition-smooth {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
