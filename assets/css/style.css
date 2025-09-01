@@ -119,3 +119,32 @@
 .expand-button:hover::before {
   left: 100%;
 }
+
+
+.chat-bottom-glow {
+	height: 8px;
+	background: linear-gradient(to right, transparent, rgba(0, 184, 148, 0.8), transparent);
+	border-radius: 4px;
+	animation: bottomGlow 2s ease-in-out infinite alternate;
+	z-index: 10;
+	opacity: 1;
+	visibility: visible;
+	margin-top: -4px;
+	margin-bottom: 8px;
+}
+
+.chat-bottom-glow.hidden {
+	opacity: 0;
+	visibility: hidden;
+}
+
+@keyframes bottomGlow {
+	0% {
+		box-shadow: 0 2px 15px rgba(0, 184, 148, 0.6);
+		background: linear-gradient(to right, transparent, rgba(0, 184, 148, 0.8), transparent);
+	}
+	100% {
+		box-shadow: 0 4px 25px rgba(0, 184, 148, 0.9);
+		background: linear-gradient(to right, transparent, rgba(0, 184, 148, 1), transparent);
+	}
+}

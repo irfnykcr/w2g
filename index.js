@@ -263,18 +263,23 @@ const createWindow = async () => {
 }
 
 function sendVLCStatus(status, additionalData = {}) {
-	if (mainWindow && mainWindow.webContents) {
-		const fullStatus = { ...status, ...additionalData }
-		mainWindow.webContents.send('vlc-status', fullStatus)
-		
-		currentVLCStatus = {
-			status: status.status,
-			isPlaying: status.isPlaying,
-			current_time: additionalData.currentTime || 0,
-			is_uptodate: additionalData.isUpToDate || false
+	try{
+		if (mainWindow && mainWindow.webContents) {
+			const fullStatus = { ...status, ...additionalData }
+			mainWindow.webContents.send('vlc-status', fullStatus)
+			
+			currentVLCStatus = {
+				status: status.status,
+				isPlaying: status.isPlaying,
+				current_time: additionalData.currentTime || 0,
+				is_uptodate: additionalData.isUpToDate || false
+			}
 		}
+		return true
+	} catch {
+		logger.error("sendVLCStatus: there was a problem.")
+		return false
 	}
-	return true
 }
 
 const connectVideoSyncWS = async () => {
@@ -296,6 +301,7 @@ const connectVideoSyncWS = async () => {
 		videoSyncWS = new WebSocket(wsUrl)
 		
 		return new Promise((resolve) => {
+			logger.info("trying to connect to websocket..")
 			videoSyncWS.on('open', () => {
 				logger.info("Video sync WebSocket connected")
 				isClientUpToDate = false
@@ -322,7 +328,7 @@ const connectVideoSyncWS = async () => {
 				if (is_watching) {
 					wsReconnectTimeout = setTimeout(() => {
 						connectVideoSyncWS()
-					}, 2000)
+					}, 1000)
 				}
 			})
 			
@@ -354,6 +360,11 @@ const sendVideoSyncMessage = async (message) => {
 		logger.warn("Video sync WebSocket not connected")
 		return null
 	}
+	if (!is_watching || !proc_vlc) { 
+		abortVLC()
+		logger.debug(`sendVideoSyncMessage: aborted. is_watching'${is_watching}' proc_vlc'${proc_vlc}'`)
+		return true
+	}
 	
 	const requestId = ++wsRequestId
 	message.requestId = requestId
@@ -370,68 +381,6 @@ const sendVideoSyncMessage = async (message) => {
 		
 		videoSyncWS.send(JSON.stringify(message))
 	})
-}
-
-const applyServerState = async (state) => {
-	let needsSync = false
-	
-	try {
-		if (state.url && state.url_user !== USERID) {
-			if (proc_vlc && is_watching) {
-				try {
-					const currentUrl = await getVideoUrl_VLC()
-					if (currentUrl !== state.url) {
-						logger.info("Applying server URL:", state.url)
-						await setVideo(state.url)
-						needsSync = true
-					} else {
-						logger.info("VLC already playing correct URL, no restart needed")
-					}
-				} catch (error) {
-					logger.info("VLC running but not ready, applying server URL:", state.url)
-					await setVideo(state.url)
-					needsSync = true
-				}
-			} else {
-				logger.info("Starting VLC with server state")
-				await openVLC(state)
-				needsSync = true
-			}
-		}
-		
-		if (state.time > 0 && state.time_user !== USERID && proc_vlc && is_watching) {
-			try {
-				const info = await getInfo()
-				const currentTime = Math.floor(parseFloat(info.data.length) * parseFloat(info.data.position))
-				if (Math.abs(currentTime - state.time) > 2) {
-					logger.info("Applying server time:", state.time)
-					await setTime(state.time)
-					needsSync = true
-				}
-			} catch (error) {
-				logger.debug("Cannot sync time, VLC not ready")
-			}
-		}
-		
-		if (state.playing_user !== USERID && proc_vlc && is_watching) {
-			try {
-				const info = await getInfo()
-				const currentlyPlaying = info.data.state !== "paused"
-				if (currentlyPlaying !== state.is_playing) {
-					logger.info("Applying server playing state:", state.is_playing)
-					await setPlaying(state.is_playing)
-					needsSync = true
-				}
-			} catch (error) {
-				logger.debug("Cannot sync playing state, VLC not ready")
-			}
-		}
-		
-	} catch (error) {
-		logger.error("Error applying server state:", error.message)
-	}
-	
-	return needsSync
 }
 
 const handleVideoSyncMessage = async (message) => {
@@ -452,38 +401,8 @@ const handleVideoSyncMessage = async (message) => {
 	}
 	
 	if (type === 'initial_state') {
-		logger.info("Received initial state from server")
-		isClientUpToDate = true
-		
-		const needsSync = await applyServerState(message)
-		
-		if (needsSync) {
-			setTimeout(async () => {
-				try {
-					if (message.url) {
-						try {
-							const currentUrl = await getVideoUrl_VLC()
-							if (currentUrl === message.url) {
-								await makeRequest_videoSync("imuptodate")
-								logger.info("Confirmed sync with server after VLC ready")
-							}
-						} catch (error) {
-							setTimeout(() => {
-								makeRequest_videoSync("imuptodate").catch(err => 
-									logger.warn("Failed to confirm delayed sync:", err.message))
-							}, 1000)
-						}
-					} else {
-						await makeRequest_videoSync("imuptodate")
-					}
-				} catch (err) {
-					logger.warn("Failed to confirm initial sync:", err.message)
-				}
-			}, 2000)
-		} else {
-			makeRequest_videoSync("imuptodate").catch(err => 
-				logger.warn("Failed to confirm initial sync:", err.message))
-		}
+		logger.info("Received initial state from server - will sync when VLC is ready")
+		isClientUpToDate = false
 	}
 	else if (type === 'connected') {
 		logger.info("Connected to video sync server")
@@ -597,6 +516,11 @@ const makeRequest_videoSync = async (type, data = {}) => {
 			logger.warn(`VideoSync request failed: WebSocket not connected (${type})`)
 			return { status: false, error: "WebSocket not connected" }
 		}
+		if (!is_watching || !proc_vlc) { 
+			abortVLC()
+			logger.debug(`makeRequest_videoSync: aborted. is_watching'${is_watching}' proc_vlc'${proc_vlc}'`)
+			return true
+		}
 		
 		const message = { type, ...data }
 		const response = await sendVideoSyncMessage(message)
@@ -646,18 +570,15 @@ const getVideoUrl_VLC = async ()=>{
 }
 
 const abortVLC = async (isVideoChange = false) => {
-	if (proc_vlc){
-		proc_vlc.kill("SIGKILL")
-		logger.info(`Killed VLC process: ${proc_vlc.pid}`)
-		proc_vlc = null
-	}
 	is_watching = false
 	if (vlcInterval){
 		clearInterval(vlcInterval)
+		vlcInterval = null
 		logger.info("cleared vlc interval")
 	}
 	if (serverInterval){
 		clearInterval(serverInterval)
+		serverInterval = null
 		logger.info("cleared server interval")
 	}
 	
@@ -668,6 +589,17 @@ const abortVLC = async (isVideoChange = false) => {
 	
 	if (!isVideoChange) {
 		disconnectVideoSyncWS()
+	} else {
+		if (videoSyncWS) {
+			videoSyncWS.close()
+			videoSyncWS = null
+		}
+	}
+	
+	if (proc_vlc){
+		proc_vlc.kill("SIGKILL")
+		logger.info(`Killed VLC process: ${proc_vlc.pid}`)
+		proc_vlc = null
 	}
 }
 
@@ -740,10 +672,13 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 			throw new Error('Invalid URL provided')
 		}
 		logger.info("update_url", url)
-		await makeRequest_videoSync("update_url", {"new_url": url})
-		await setVideo(url)
+		const result = await makeRequest_videoSync("update_url", {"new_url": url})
 		
-		return true
+		if (result.status) {
+			await setVideo(url)
+		}
+		
+		return result.status
 	} catch (error) {
 		logger.error("Error in setvideo-vlc:", error)
 		return false
@@ -775,6 +710,11 @@ const setTime = async (time) => {
 	
 	while (tried < maxTries) {
 		try {
+			if (!is_watching || !proc_vlc) { 
+				abortVLC()
+				logger.debug(`setTime: aborted. is_watching'${is_watching}' proc_vlc'${proc_vlc}'`)
+				return true
+			}
 			await axios.post(
 				`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=seek&val=${time}`,
 				null,
@@ -814,6 +754,11 @@ const setPlaying = async (is_playing) => {
 	
 	while (tried < maxTries) {
 		try {
+			if (!is_watching || !proc_vlc) { 
+				abortVLC()
+				logger.debug(`setPlaying: aborted. is_watching'${is_watching}' proc_vlc'${proc_vlc}'`)
+				return true
+			}
 			await axios.post(
 				`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=${command}`,
 				null,
@@ -852,9 +797,21 @@ const openVLC = async () => {
 		}
 
 		is_watching = true
+		proc_vlc = "placeholder"
 		
-		if (!await connectVideoSyncWS()) {
-			logger.warn("Failed to connect to video sync")
+		let connectionAttempts = 0
+		while (connectionAttempts < 3) {
+			if (await connectVideoSyncWS()) {
+				break
+			}
+			connectionAttempts++
+			if (connectionAttempts < 3) {
+				await new Promise(resolve => setTimeout(resolve, 500))
+			}
+		}
+		
+		if (connectionAttempts >= 3) {
+			logger.warn("Failed to connect to video sync after 3 attempts")
 			return resolve(false)
 		}
 		
@@ -919,17 +876,24 @@ const openVLC = async () => {
 		})
 
 		proc_vlc.on('error', (error) => {
+			logger.error(`VLC error: ${error.message}`)
+			abortVLC()
 			reject(`VLC launch error: ${error.message}`)
-			return abortVLC()
 		})
 
 		proc_vlc.on('close', (code) => {
+			logger.info(`VLC closed with code: ${code}`)
+			abortVLC()
 			if (code === 0) {
 				resolve('VLC exited successfully')
 			} else {
 				resolve(`VLC exited with code ${code}`)
 			}
-			return abortVLC()
+		})
+
+		proc_vlc.on('exit', (code, signal) => {
+			logger.info(`VLC exited with code: ${code}, signal: ${signal}`)
+			abortVLC()
 		})
 	})
 }
@@ -968,9 +932,19 @@ const startVLCMonitoring = async () => {
 		return false
 	}
 
+	let initialIsPlaying = true
+	try {
+		const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
+		if (statusResult && statusResult.data && statusResult.data.is_playing) {
+			initialIsPlaying = statusResult.data.is_playing.value
+		}
+	} catch (error) {
+		logger.debug("Could not get initial server state, defaulting to playing")
+	}
+
 	sendVLCStatus({
-		status: 'playing',
-		isPlaying: true
+		status: initialIsPlaying ? 'playing' : 'paused',
+		isPlaying: initialIsPlaying
 	}, {
 		currentTime: 0,
 		isUpToDate: isClientUpToDate
@@ -978,7 +952,8 @@ const startVLCMonitoring = async () => {
 
 	vlcInterval = setInterval(async () => {
 		if (!is_watching || !proc_vlc) { 
-			clearInterval(vlcInterval)
+			abortVLC()
+			logger.debug(`startVLCmonitoring: aborted. is_watching'${is_watching}' proc_vlc'${proc_vlc}'`)
 			return
 		}
 
@@ -1027,7 +1002,6 @@ const startVLCMonitoring = async () => {
 						// 	await setPlaying(serverStatus.is_playing.value)
 						// }
 					}
-					
 					await sendVideoSyncMessage({ type: "imuptodate" })
 					isClientUpToDate = true
 					logger.info("sent imuptodate and marked isclientuptodate true.")
@@ -1150,7 +1124,7 @@ const startVLCMonitoring = async () => {
 			}
 			clearInterval(vlcInterval)
 		}
-	}, 250)
+	}, 500)
 }
 
 ipcMain.handle('open-vlc', async (event) => {

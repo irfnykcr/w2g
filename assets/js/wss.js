@@ -30,6 +30,57 @@ let messageReactions = new Map()
 let ws
 let USER 
 
+// focus tracking and notification system
+let isWindowFocused = true
+let hasUnreadMessages = false
+let notificationSound = null
+
+window.addEventListener('focus', () => {
+	isWindowFocused = true
+	clearNotificationGlow()
+})
+
+window.addEventListener('blur', () => {
+	isWindowFocused = false
+})
+
+function clearNotificationGlow() {
+	hasUnreadMessages = false
+	const glowElement = document.getElementById('chat-notification-glow')
+	if (glowElement) {
+		glowElement.classList.add('hidden')
+		loggerWss.debug("clearNotificationGlow: glow element found and hidden class added")
+	} else {
+		loggerWss.error("clearNotificationGlow: glow element not found!")
+	}
+}
+
+function showNotificationGlow() {
+	if (!isWindowFocused) {
+		loggerWss.debug("showNotificationGlow: showing glow")
+		hasUnreadMessages = true
+		const glowElement = document.getElementById('chat-notification-glow')
+		if (glowElement) {
+			glowElement.classList.remove('hidden')
+			loggerWss.debug("showNotificationGlow: glow element found and hidden class removed")
+		} else {
+			loggerWss.error("showNotificationGlow: glow element not found!")
+		}
+	} else {
+		loggerWss.debug("showNotificationGlow: window is focused, not showing glow")
+	}
+}
+
+function playNotificationSound() {
+	if (!isWindowFocused && notificationSound) {
+		notificationSound.play().catch(err => {
+			loggerWss.debug('Could not play notification sound:', err.message)
+		})
+	}
+}
+
+
+
 
 function getUserImageUrl() {
 	const messages = Array.from(messagesById.values())
@@ -549,6 +600,7 @@ function sendWatcherUpdate(isWatching, imageurl = '', currentTime = 0, isPlaying
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+	notificationSound = document.getElementById('notification-sound')
 	const chatRoomName = document.querySelector("#chat-roomname")
 	const inputRoomName = document.querySelector("#input-roomname")
 
@@ -658,7 +710,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 							reactions[emoji].count++
 						}
 					}
-					addMessage(message)
+					addMessage(message, true)
 				})
 				
 				messageReactions.forEach((reactions, messageId) => {
@@ -689,6 +741,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const messageButton = document.getElementById("send-chatmessage")
 	const messageInput = document.getElementById("input-chatmessage")
 
+	if (messages) {
+		let isManualScroll = true
+		messages.addEventListener('scroll', () => {
+			if (isManualScroll) {
+				clearNotificationGlow()
+			}
+		})
+		messages.addEventListener('click', clearNotificationGlow)
+		
+		window.scrollMessagesToBottom = () => {
+			isManualScroll = false
+			messages.scrollTop = messages.scrollHeight
+			setTimeout(() => { isManualScroll = true }, 100)
+		}
+	}
+	if (messageInput) {
+		messageInput.addEventListener('focus', clearNotificationGlow)
+		messageInput.addEventListener('input', clearNotificationGlow)
+	}
+
 	function sendMessage() {
 		const message = messageInput.value.trim()
 		if (message) {
@@ -710,7 +782,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 	}
 
-	function addMessage(data) {
+	function addMessage(data, isHistoryMessage = false) {
 		const messageId = data.id
 		const user = data.user
 		const text = data.message
@@ -722,6 +794,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 		const date = new Date(data.date * 1000).toLocaleString()
 		const replyTo = data.reply_to || null
+
+		if (messageType === "new_message" && user !== USER && !isDeleted && !isHistoryMessage) {
+			playNotificationSound()
+			showNotificationGlow()
+		}
 
 		if (messageType === "new_reaction") {
 			const targetMessageId = data.reply_to
@@ -873,7 +950,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 		}
 		
-		messages.scrollTop = messages.scrollHeight
+		if (window.scrollMessagesToBottom) {
+			window.scrollMessagesToBottom()
+		} else {
+			messages.scrollTop = messages.scrollHeight
+		}
 	}
 
 	messageInput.addEventListener("keypress", (e) => {
