@@ -745,15 +745,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const messageButton = document.getElementById("send-chatmessage")
 	const messageInput = document.getElementById("input-chatmessage")
 
+	document.body.addEventListener('click', () => {
+		if (hasUnreadMessages) {
+			clearNotificationGlow()
+		}
+	})
+
 	if (messages) {
 		let isManualScroll = true
 		messages.addEventListener('scroll', () => {
 			if (isManualScroll && hasUnreadMessages) {
-				clearNotificationGlow()
-			}
-		})
-		messages.addEventListener('click', () => {
-			if (hasUnreadMessages) {
 				clearNotificationGlow()
 			}
 		})
