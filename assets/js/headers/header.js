@@ -3,7 +3,7 @@ tailwind.config = {
 	theme: {
 		extend: {
 			colors: {
-				turkuazz: "#14a689ff",
+				turkuazz: "#04aa6d",
 				"dark-turkuazz": "#0e725eff",
 				"dark-bg": "#1a1a1a",
 				"dark-card": "#2a2a2a",

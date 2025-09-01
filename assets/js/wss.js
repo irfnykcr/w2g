@@ -36,8 +36,11 @@ let hasUnreadMessages = false
 let notificationSound = null
 
 window.addEventListener('focus', () => {
+	const wasUnfocused = !isWindowFocused
 	isWindowFocused = true
-	clearNotificationGlow()
+	if (wasUnfocused && hasUnreadMessages) {
+		clearNotificationGlow()
+	}
 })
 
 window.addEventListener('blur', () => {
@@ -56,18 +59,14 @@ function clearNotificationGlow() {
 }
 
 function showNotificationGlow() {
-	if (!isWindowFocused) {
-		loggerWss.debug("showNotificationGlow: showing glow")
-		hasUnreadMessages = true
-		const glowElement = document.getElementById('chat-notification-glow')
-		if (glowElement) {
-			glowElement.classList.remove('hidden')
-			loggerWss.debug("showNotificationGlow: glow element found and hidden class removed")
-		} else {
-			loggerWss.error("showNotificationGlow: glow element not found!")
-		}
+	loggerWss.debug("showNotificationGlow: showing glow")
+	hasUnreadMessages = true
+	const glowElement = document.getElementById('chat-notification-glow')
+	if (glowElement) {
+		glowElement.classList.remove('hidden')
+		loggerWss.debug("showNotificationGlow: glow element found and hidden class removed")
 	} else {
-		loggerWss.debug("showNotificationGlow: window is focused, not showing glow")
+		loggerWss.error("showNotificationGlow: glow element not found!")
 	}
 }
 
@@ -375,11 +374,16 @@ function updateMessageReactions(messageId) {
         reactionsContainer = document.createElement('div')
         reactionsContainer.className = 'reactions-container flex flex-wrap gap-1'
         
-        const emojiButtonContainer = messageElement.querySelector('.reaction-add-btn')?.parentNode
-        if (emojiButtonContainer) {
-            emojiButtonContainer.insertBefore(reactionsContainer, emojiButtonContainer.firstChild)
+        const reactionsArea = messageElement.querySelector('.message-reactions-area')
+        if (reactionsArea) {
+            reactionsArea.appendChild(reactionsContainer)
         } else {
-            messageElement.appendChild(reactionsContainer)
+            const emojiButtonContainer = messageElement.querySelector('.reaction-add-btn')?.parentNode
+            if (emojiButtonContainer) {
+                emojiButtonContainer.insertBefore(reactionsContainer, emojiButtonContainer.firstChild)
+            } else {
+                messageElement.appendChild(reactionsContainer)
+            }
         }
     }
     
@@ -744,11 +748,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 	if (messages) {
 		let isManualScroll = true
 		messages.addEventListener('scroll', () => {
-			if (isManualScroll) {
+			if (isManualScroll && hasUnreadMessages) {
 				clearNotificationGlow()
 			}
 		})
-		messages.addEventListener('click', clearNotificationGlow)
+		messages.addEventListener('click', () => {
+			if (hasUnreadMessages) {
+				clearNotificationGlow()
+			}
+		})
 		
 		window.scrollMessagesToBottom = () => {
 			isManualScroll = false
@@ -757,8 +765,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 	}
 	if (messageInput) {
-		messageInput.addEventListener('focus', clearNotificationGlow)
-		messageInput.addEventListener('input', clearNotificationGlow)
+		messageInput.addEventListener('focus', () => {
+			if (hasUnreadMessages) {
+				clearNotificationGlow()
+			}
+		})
+		messageInput.addEventListener('input', () => {
+			if (hasUnreadMessages) {
+				clearNotificationGlow()
+			}
+		})
 	}
 
 	function sendMessage() {
@@ -796,7 +812,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const replyTo = data.reply_to || null
 
 		if (messageType === "new_message" && user !== USER && !isDeleted && !isHistoryMessage) {
-			playNotificationSound()
+			if (!isWindowFocused) {
+				playNotificationSound()
+			}
 			showNotificationGlow()
 		}
 
@@ -853,12 +871,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 					</div>
 				`
 			} else {
+				let reply_txt = ""
+				if (replyTo.message.length > 25){
+					reply_txt = `${replyTo.message.substring(0, 25)}...`
+				}
 				replyContent = `
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
 						 onclick="scrollToMessage(${replyTo.id})" 
 						 title="Click to scroll to original message">
 						<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
-						<div class="text-gray-300 mt-1">${replyTo.message}</div>
+						<div class="text-gray-300 mt-1">${reply_txt}</div>
 					</div>
 				`
 			}
@@ -881,16 +903,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 					: ''}
 				</div>
 			</div>
-			<div class="text-gray-300 text-sm break-words">${processedContent}</div>
-			${user !== "system" && messageId ?
-				`<div class="flex justify-end gap-2">
-					<button class="reaction-add-btn hover:text-turkuazz transition-colors duration-200 opacity-70 hover:opacity-100" title="Add reaction">
+			<div class="flex flex-wrap items-end gap-2">
+				<div class="text-gray-300 text-sm break-words flex-1 min-w-0">${processedContent}</div>
+				${user !== "system" && messageId ?
+					`<button class="reaction-add-btn hover:text-turkuazz transition-colors duration-200 opacity-70 hover:opacity-100 flex-shrink-0 self-end" title="Add reaction">
 						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
 							<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
 							<path d="M4.285 9.567a.5.5 0 0 1 .683.183A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0 3.032-1.75.5.5 0 1 1 .866.5A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1-3.898-2.25.5.5 0 0 1 .183-.683M7 6.5C7 7.328 6.552 8 6 8s-1-.672-1-1.5S5.448 5 6 5s1 .672 1 1.5m4 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S9.448 5 10 5s1 .672 1 1.5"/>
 						</svg>
-					</button>
-				</div>`
+					</button>`
+				: ''}
+			</div>
+			${user !== "system" && messageId ?
+				`<div class="message-reactions-area mt-2"></div>`
 			: ''}
 		`
 
@@ -899,22 +924,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		if (user !== "system" && messageId) {
+			let reply_txt = ""
+			if (text.length > 25){
+				reply_txt = `${text.substring(0, 25)}...`
+			}
 			messageDiv.addEventListener('dblclick', () => {
 				const isDeleted = messageDiv.style.opacity === '0.5' && messageDiv.style.filter === 'grayscale(100%)'
 				if (!isDeleted) {
-					setReplyMode(messageId, user, text, messageDiv)
+					
+					setReplyMode(messageId, user, reply_txt, messageDiv)
 				}
 			})
 
 			messageDiv.addEventListener('contextmenu', (e) => {
 				e.preventDefault()
-				showMessageContextMenu(e, messageId, user, text, messageDiv)
+				showMessageContextMenu(e, messageId, user, reply_txt, messageDiv)
 			})
 
 			const replyBtn = messageDiv.querySelector('.reply-btn')
 			if (replyBtn) {
 				replyBtn.addEventListener('click', () => {
-					setReplyMode(messageId, user, text, messageDiv)
+					setReplyMode(messageId, user, reply_txt, messageDiv)
 				})
 			}
 			
