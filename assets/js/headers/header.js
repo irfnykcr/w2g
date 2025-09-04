@@ -35,9 +35,21 @@ document.addEventListener("DOMContentLoaded", () => {
 				</div>
 				<!-- right side -->
 				<div class="flex items-center space-x-2 sm:space-x-4">
+					<div class="flex items-center space-x-2 bg-dark-card rounded-lg px-3 py-1">
+						<span class="text-xs text-gray-400">Player:</span>
+						<label class="flex items-center cursor-pointer">
+							<input type="checkbox" id="video-mode-switch" class="sr-only">
+							<div class="relative">
+								<div class="w-10 h-6 bg-gray-600 rounded-full shadow-inner transition-colors"></div>
+								<div class="dot absolute w-4 h-4 bg-white rounded-full shadow left-0 top-1 transition-transform"></div>
+							</div>
+							<span class="ml-2 text-xs text-gray-300" id="video-mode-label">VLC</span>
+						</label>
+					</div>
 					<div class="hidden sm:flex text-xs text-gray-400 space-x-3">
 						<span>Ctrl+1: Video</span>
-						<span>Ctrl+2: Chat</span>
+						<span>Ctrl+2: Player</span>
+						<span>Ctrl+3: Chat</span>
 						<span>Ctrl+0: Show All</span>
 					</div>
 		`
@@ -76,6 +88,20 @@ document.addEventListener("DOMContentLoaded", () => {
 	leftButton.addEventListener("click", async ()=>{
 		await window.electronAPI.leftTheRoom()
 		await window.electronAPI.gotoRoomJoin()
+	})
+  }
+
+  const videoModeSwitch = headerEl.querySelector("#video-mode-switch")
+  const videoModeLabel = headerEl.querySelector("#video-mode-label")
+  if (videoModeSwitch && videoModeLabel) {
+	videoModeSwitch.checked = false
+	videoModeSwitch.addEventListener("change", async () => {
+		const isInlineMode = videoModeSwitch.checked
+		videoModeLabel.textContent = isInlineMode ? "Inline" : "VLC"
+		
+		if (window.updateVideoMode) {
+			await window.updateVideoMode(isInlineMode)
+		}
 	})
   }
 })

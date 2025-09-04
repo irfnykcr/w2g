@@ -2,9 +2,14 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
 	openVLC: (url, currentsec) => ipcRenderer.invoke('open-vlc', url, currentsec),
-	setVideoVLC: (url) => ipcRenderer.invoke('setvideo-vlc', url),
+	setvideoVLC: (url) => ipcRenderer.invoke('setvideo-vlc', url),
 	getVLCStatus: () => ipcRenderer.invoke('get-vlc-status'),
 	getWatchersStatus: () => ipcRenderer.invoke('get-watchers-status'),
+	
+	startInlineVideo: () => ipcRenderer.invoke('start-inline-video'),
+	setInlineVideo: (url) => ipcRenderer.invoke('set-inline-video', url),
+	stopInlineVideo: () => ipcRenderer.invoke('stop-inline-video'),
+	stopVLC: () => ipcRenderer.invoke('stop-vlc'),
 
 	setUserCreds: (user, userpsw) => ipcRenderer.invoke('set-usercreds', user, userpsw),
 	setRoomCreds: (roomid, roompsw) => ipcRenderer.invoke('set-roomcreds', roomid, roompsw),
@@ -20,6 +25,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			callback(data)
 		})
 	},
+
+	onInlineVideoStart: (callback) => {
+		ipcRenderer.on('inline-video-start', (_, data) => {
+			callback(data)
+		})
+	},
+	onInlineVideoSet: (callback) => {
+		ipcRenderer.on('inline-video-set', (_, data) => {
+			callback(data)
+		})
+	},
+	onInlineVideoStop: (callback) => {
+		ipcRenderer.on('inline-video-stop', (_, data) => {
+			callback(data)
+		})
+	},
+	onInlineVideoGetStatusSync: (callback) => {
+		ipcRenderer.on('inline-video-get-status-sync', (_, data) => {
+			callback(data)
+		})
+	},
+	onInlineVideoSyncTime: (callback) => {
+		ipcRenderer.on('inline-video-sync-time', (_, data) => {
+			callback(data)
+		})
+	},
+	onInlineVideoSyncPlaying: (callback) => {
+		ipcRenderer.on('inline-video-sync-playing', (_, data) => {
+			callback(data)
+		})
+	},
+	sendInlineVideoStatusSync: (data) => ipcRenderer.invoke('inline-video-status-response-sync', data),
+	
 	onServerStatus: (callback) => {
 		ipcRenderer.on('server-status', (_, data) => {
 			callback(data)

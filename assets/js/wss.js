@@ -612,21 +612,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const SERVER_ENDPOINT = await window.electronAPI.getServerEndpoint()
 	let USER_PSW
 	await window.electronAPI.getUser().then((r)=>{
-		loggerWss.debug(r)
 		USER = r.user
 		USER_PSW = r.psw
 	})
 	let ROOM_ID
 	let ROOM_PSW 
 	await window.electronAPI.getRoom().then(async (r)=>{
-		loggerWss.debug(r)
 		if (r === false){
 			loggerWss.info("asking for room creds")
 			window.electronAPI.gotoRoomJoin()
 		} else {
 			ROOM_ID = r.room
 			ROOM_PSW = r.psw
-			loggerWss.debug("already have creds",r, ROOM_ID, ROOM_PSW)
+			// loggerWss.debug("already have creds",r, ROOM_ID, ROOM_PSW)
+			loggerWss.debug("already have creds")
 		}
 		if (ROOM_ID === null || ROOM_ID === undefined){
 			loggerWss.info("reload1")
@@ -806,9 +805,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const messageType = data.message_type || "new_message"
 		const isDeleted = data.is_deleted || false
 		
-		if (messageType != "new_message"){
-			loggerWss.debug(messageType)
-		}
+		// if (messageType != "new_message"){
+		// 	loggerWss.debug(messageType)
+		// }
 		const date = new Date(data.date * 1000).toLocaleString()
 		const replyTo = data.reply_to || null
 
@@ -875,6 +874,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				let reply_txt = ""
 				if (replyTo.message.length > 25){
 					reply_txt = `${replyTo.message.substring(0, 25)}...`
+				} else {
+					reply_txt = replyTo.message
 				}
 				replyContent = `
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
@@ -928,6 +929,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 			let reply_txt = ""
 			if (text.length > 25){
 				reply_txt = `${text.substring(0, 25)}...`
+			} else {
+				reply_txt = text
 			}
 			messageDiv.addEventListener('dblclick', () => {
 				const isDeleted = messageDiv.style.opacity === '0.5' && messageDiv.style.filter === 'grayscale(100%)'

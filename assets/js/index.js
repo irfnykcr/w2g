@@ -17,218 +17,272 @@ const loggerIndex = {
 	}
 }
 
-// window.electronAPI.onVLCstatus((data) => {
-// 	loggerIndex.debug("VLC Status:", data)
-// })
-
-// window.electronAPI.onServerStatus((data) => {
-// 	loggerIndex.debug("SERVER Status:", data)
-// })
-
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
 	const playthevideo = document.querySelector("#play-thevideo")
-
+	const videoPlayer = document.querySelector("#video-player")
 
 	playthevideo.addEventListener("click", async () => {
 		try {
-			await window.electronAPI.openVLC()
+			if (isInlineMode) {
+				await startInlineVideo()
+			} else {
+				await window.electronAPI.openVLC()
+			}
 		} catch (error) {
-			loggerIndex.error("Error opening VLC:", error)
+			loggerIndex.error("Error starting video:", error)
 		}
 	})
 
 	setthevideo.addEventListener("click", async () => {
-		const videoUrlValue = videourl.value.trim()
-		if (videoUrlValue) {
-			try {
-				await window.electronAPI.setVideoVLC(videoUrlValue)
-			} catch (error) {
-				loggerIndex.error("Error setting video:", error)
+		const url = videourl.value.trim()
+		if (!url) return
+		
+		try {
+			if (isInlineMode) {
+				await setInlineVideo(url)
+			} else {
+				await window.electronAPI.setvideoVLC(url)
 			}
-		} else {
-			loggerIndex.error("Video URL is empty or invalid.")
+		} catch (error) {
+			loggerIndex.error("Error setting video:", error)
 		}
 	})
 
 	const main = document.querySelector("main")
+	const leftPanel = document.getElementById("left-panel")
 	const urlSection = document.getElementById("url-section")
+	const videoSection = document.getElementById("video-section")
 	const chatSection = document.getElementById("chat-section")
 	const urlToggleButton = document.getElementById("toggle-url-section")
+	const videoToggleButton = document.getElementById("toggle-video-section")
 	const chatToggleButton = document.getElementById("toggle-chat-section")
 	const collapsedToggles = document.getElementById("collapsed-toggles")
 	const expandUrlButton = document.getElementById("expand-url")
+	const expandVideoButton = document.getElementById("expand-video")
 	const expandChatButton = document.getElementById("expand-chat")
+	const horizontalResizer = document.getElementById("horizontal-resizer")
+	const verticalResizer = document.getElementById("vertical-resizer")
 
 	let isUrlExpanded = true
+	let isVideoExpanded = false
 	let isChatExpanded = true
+	let isResizing = false
+	let resizeType = null
+	let isInlineMode = false
+	let inlineVideoInterval = null
+	let isInlineWatching = false
 
 	function isMobile() {
 		return window.innerWidth < 850
 	}
 
-	function updateCollapsedToggles() {
-		const hasCollapsed = !isUrlExpanded || !isChatExpanded
+	window.updateVideoMode = async (inlineMode) => {
+		isInlineMode = inlineMode
+		
+		if (inlineMode) {
+			await window.electronAPI.stopVLC()
+			videoPlayer.pause()
+			videoPlayer.src = ""
+			videoPlayer.load()
+			isVideoExpanded = true
+			videoSection.style.display = "flex"
+		} else {
+			await stopInlineVideo()
+			isVideoExpanded = false
+			videoSection.style.display = "none"
+		}
+		updateLayout()
+	}
+
+	const startInlineVideo = async () => {
+		if (isInlineWatching) return false
+		
+		try {
+			return await window.electronAPI.startInlineVideo()
+		} catch (error) {
+			loggerIndex.error("Failed to start inline video:", error)
+			return false
+		}
+	}
+
+	const setInlineVideo = async (url) => {
+		try {
+			return await window.electronAPI.setInlineVideo(url)
+		} catch (error) {
+			loggerIndex.error("Failed to set inline video:", error)
+			return false
+		}
+	}
+
+	const stopInlineVideo = async () => {
+		isInlineWatching = false
+		
+		if (inlineVideoInterval) {
+			clearInterval(inlineVideoInterval)
+			inlineVideoInterval = null
+		}
+		
+		videoPlayer.pause()
+		videoPlayer.src = ""
+		videoPlayer.load()
+		
+		await window.electronAPI.stopInlineVideo()
+	}
+
+	const setupInlineVideoSync = () => {
+		window.electronAPI.onInlineVideoStart((data) => {
+			videoPlayer.src = data.url
+			videoPlayer.currentTime = data.time
+			if (data.isPlaying) {
+				videoPlayer.play()
+			} else {
+				videoPlayer.pause()
+			}
+			isInlineWatching = true
+		})
+		
+		window.electronAPI.onInlineVideoSet((data) => {
+			videoPlayer.src = data.url
+			videoPlayer.currentTime = 0
+		})
+		
+		window.electronAPI.onInlineVideoStop(() => {
+			isInlineWatching = false
+			if (inlineVideoInterval) {
+				clearInterval(inlineVideoInterval)
+				inlineVideoInterval = null
+			}
+			videoPlayer.pause()
+			videoPlayer.src = ""
+			videoPlayer.load()
+		})
+		
+		window.electronAPI.onInlineVideoSyncTime((data) => {
+			if (Math.abs(videoPlayer.currentTime - data.time) > 2) {
+				videoPlayer.currentTime = data.time
+			}
+		})
+		
+		window.electronAPI.onInlineVideoSyncPlaying((data) => {
+			if (data.isPlaying && videoPlayer.paused) {
+				videoPlayer.play()
+			} else if (!data.isPlaying && !videoPlayer.paused) {
+				videoPlayer.pause()
+			}
+		})
+		
+		window.electronAPI.onInlineVideoGetStatusSync(() => {
+			if (!isInlineWatching || !isInlineMode) return
+			
+			const currentTime = Math.floor(videoPlayer.currentTime || 0)
+			const isPlaying = !videoPlayer.paused
+			const currentVideo = videoPlayer.src
+			
+			window.electronAPI.sendInlineVideoStatusSync({
+				currentTime,
+				isPlaying,
+				currentVideo
+			})
+		})
+	}
+
+	setupInlineVideoSync()
+
+	function startResize(e, type) {
+		e.preventDefault()
+		isResizing = true
+		resizeType = type
+		document.body.style.cursor = type === "horizontal" ? "row-resize" : "col-resize"
+		document.body.style.userSelect = "none"
+	}
+
+	function doResize(e) {
+		if (!isResizing) return
+		
+		if (resizeType === "horizontal") {
+			const rect = leftPanel.getBoundingClientRect()
+			const y = e.clientY - rect.top
+			const percent = (y / rect.height) * 100
+			
+			urlSection.style.flex = percent
+			videoSection.style.flex = (100 - percent)
+		} else {
+			const rect = main.getBoundingClientRect()
+			const x = e.clientX - rect.left
+			const percent = (x / rect.width) * 100
+			
+			leftPanel.style.flex = percent
+			chatSection.style.flex = (100 - percent)
+		}
+	}
+
+	function stopResize() {
+		isResizing = false
+		resizeType = null
+		document.body.style.cursor = ""
+		document.body.style.userSelect = ""
+	}
+
+	horizontalResizer.onmousedown = (e) => startResize(e, "horizontal")
+	verticalResizer.onmousedown = (e) => startResize(e, "vertical")
+	document.onmousemove = doResize
+	document.onmouseup = stopResize
+
+	function updateLayout() {
+		const hasCollapsed = !isUrlExpanded || !isVideoExpanded || !isChatExpanded
 
 		if (hasCollapsed) {
 			collapsedToggles.classList.remove("hidden")
-			collapsedToggles.classList.add("collapsed-toggles-visible")
-
-			if (!isUrlExpanded) {
-				expandUrlButton.classList.remove("hidden")
-			} else {
-				expandUrlButton.classList.add("hidden")
-			}
-
-			if (!isChatExpanded) {
-				expandChatButton.classList.remove("hidden")
-			} else {
-				expandChatButton.classList.add("hidden")
-			}
+			expandUrlButton.classList.toggle("hidden", isUrlExpanded)
+			expandVideoButton.classList.toggle("hidden", isVideoExpanded || !isInlineMode)
+			expandChatButton.classList.toggle("hidden", isChatExpanded)
 		} else {
 			collapsedToggles.classList.add("hidden")
-			collapsedToggles.classList.remove("collapsed-toggles-visible")
 			expandUrlButton.classList.add("hidden")
+			expandVideoButton.classList.add("hidden")
 			expandChatButton.classList.add("hidden")
 		}
+
+		horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode && !isMobile()) ? "block" : "none"
+		verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded && !isMobile()) ? "block" : "none"
 	}
 
-	function updateSectionVisibility(section, isExpanded) {
-		if (isExpanded) {
-			section.classList.remove("section-hidden")
-			section.style.display = "flex"
-		} else {
-			section.classList.add("section-hidden")
-			setTimeout(() => {
-				if (section.classList.contains("section-hidden")) {
-					section.style.display = "none"
-				}
-			}, 300)
-		}
-	}
-
-	function updateLayout() {
-
-		updateSectionVisibility(urlSection, isUrlExpanded)
-		updateSectionVisibility(chatSection, isChatExpanded)
-
-		updateCollapsedToggles()
-
-		main.classList.remove("flex-col", "flex-row")
-
-		if (isMobile()) {
-			main.classList.add("flex-col")
-		} else {
-			main.classList.add("flex-row")
-		}
-
-		const hiddenMessage = document.getElementById("hidden-message");
-
-		if (!isUrlExpanded && !isChatExpanded) {
-			if (!hiddenMessage) {
-				const messageDiv = document.createElement("div");
-				messageDiv.id = "hidden-message";
-				messageDiv.className = "flex-1 flex items-center justify-center text-gray-400";
-				messageDiv.innerHTML = `
-				<div class="text-center">
-					<div class="text-6xl mb-4">👻</div>
-					<p class="text-lg">All sections are hidden</p>
-					<p class="text-sm">Use the buttons above to show sections</p>
-				</div>
-				`;
-				main.appendChild(messageDiv);
-			}
-		} else {
-			if (hiddenMessage) {
-				hiddenMessage.remove();
-			}
-
-			if (isUrlExpanded && !isChatExpanded) {
-				urlSection.style.flex = "1";
-				chatSection.style.flex = "0";
-			} else if (!isUrlExpanded && isChatExpanded) {
-				chatSection.style.flex = "1";
-				urlSection.style.flex = "0";
-			} else {
-				urlSection.style.flex = "1";
-				chatSection.style.flex = "1";
-			}
-		}
-	}
-
-	urlSection.classList.add("transition-smooth")
-	chatSection.classList.add("transition-smooth")
-	urlToggleButton.classList.add("toggle-button")
-	chatToggleButton.classList.add("toggle-button")
-	expandUrlButton.classList.add("expand-button")
-	expandChatButton.classList.add("expand-button")
-
-	urlToggleButton.addEventListener("click", (e) => {
-		e.preventDefault()
-		e.stopPropagation()
+	urlToggleButton.addEventListener("click", () => {
 		isUrlExpanded = false
+		urlSection.style.display = "none"
 		updateLayout()
 	})
 
-	chatToggleButton.addEventListener("click", (e) => {
-		e.preventDefault()
-		e.stopPropagation()
+	videoToggleButton.addEventListener("click", () => {
+		isVideoExpanded = false
+		videoSection.style.display = "none"
+		updateLayout()
+	})
+
+	chatToggleButton.addEventListener("click", () => {
 		isChatExpanded = false
+		chatSection.style.display = "none"
 		updateLayout()
 	})
 
-	expandUrlButton.addEventListener("click", (e) => {
-		e.preventDefault()
-		e.stopPropagation()
+	expandUrlButton.addEventListener("click", () => {
 		isUrlExpanded = true
 		urlSection.style.display = "flex"
 		updateLayout()
 	})
 
-	expandChatButton.addEventListener("click", (e) => {
-		e.preventDefault()
-		e.stopPropagation()
-		isChatExpanded = true
-		chatSection.style.display = "flex"
+	expandVideoButton.addEventListener("click", () => {
+		isVideoExpanded = true
+		videoSection.style.display = "flex"
 		updateLayout()
 	})
 
-	let resizeTimeout
-	window.addEventListener("resize", () => {
-		clearTimeout(resizeTimeout)
-		resizeTimeout = setTimeout(updateLayout, 100)
-	})
-
-	document.addEventListener("keydown", (e) => {
-	if (e.ctrlKey || e.metaKey) {
-		if (e.key === "1") {
-			e.preventDefault()
-			if (isUrlExpanded) {
-				isUrlExpanded = false
-			} else {
-				isUrlExpanded = true
-				urlSection.style.display = "flex"
-			}
-			updateLayout()
-		} else if (e.key === "2") {
-			e.preventDefault()
-			if (isChatExpanded) {
-				isChatExpanded = false
-			} else {
-				isChatExpanded = true
-				chatSection.style.display = "flex"
-			}
-			updateLayout()
-		} else if (e.key === "0") {
-			e.preventDefault()
-			isUrlExpanded = true
-			isChatExpanded = true
-			urlSection.style.display = "flex"
-			chatSection.style.display = "flex"
-			updateLayout()
-		}
-	}
+	expandChatButton.addEventListener("click", () => {
+		isChatExpanded = true
+		chatSection.style.display = "flex"
+		updateLayout()
 	})
 
 	updateLayout()
