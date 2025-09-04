@@ -34,7 +34,9 @@ document.addEventListener("DOMContentLoaded", () => {
 					<span class="text-turkuazz font-bold text-lg sm:text-xl">TURKUAZZ</span>
 				</div>
 				<!-- right side -->
-				<div class="flex items-center space-x-2 sm:space-x-4">
+				<div class="flex items-center space-x-2 sm:space-x-4">`
+		if (document.title === "TURKUAZZ W2G") {
+			_html += `
 					<div class="flex items-center space-x-2 bg-dark-card rounded-lg px-3 py-1">
 						<span class="text-xs text-gray-400">Player:</span>
 						<label class="flex items-center cursor-pointer">
@@ -46,13 +48,8 @@ document.addEventListener("DOMContentLoaded", () => {
 							<span class="ml-2 text-xs text-gray-300" id="video-mode-label">VLC</span>
 						</label>
 					</div>
-					<div class="hidden sm:flex text-xs text-gray-400 space-x-3">
-						<span>Ctrl+1: Video</span>
-						<span>Ctrl+2: Player</span>
-						<span>Ctrl+3: Chat</span>
-						<span>Ctrl+0: Show All</span>
-					</div>
-		`
+			`
+		}
 		if (headerEl.querySelector("#logout") !== null){
 			_html += `
 				<button id="logout" class="px-4 py-2 bg-dark-turkuazz text-white rounded hover:bg-dark-hover">

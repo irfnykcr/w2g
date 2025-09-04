@@ -1,35 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-<script>
-	let USER
-	let USER_PSW
-	const checkLogin = async (username, password) => {
-		return await window.electronAPI.setUserCreds(username, password).then(async (r) => {
-			if (r) {
-				await window.electronAPI.gotoRoomJoin()
-				return true
-			}
-			console.log("login failed.")
-			return false
-		})
-	}
-	(async () => {
-		await window.electronAPI.getUser().then((r) => {
-			if (r === false) { 
-				console.log("there is no user.")
-				return 
-			}
-			console.log("there is user.", r)
-			USER = r.user
-			USER_PSW = r.psw
-		})
-		console.log(USER,USER_PSW)
-		if (USER && USER_PSW) {
-			console.log("trying:", USER, USER_PSW)
-			await checkLogin(USER, USER_PSW)
-		}
-	})()
-</script>
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -57,24 +27,74 @@
 <script src="../assets/js/headers/header.js" defer></script>
 <script>
 	document.addEventListener("DOMContentLoaded", async () => {
-		const sendLogin = document.querySelector("#send-login")
-		const username = document.querySelector("#username")
-		const password = document.querySelector("#password")
+		const sendLoginEl = document.querySelector("#send-login")
+		const usernameEl = document.querySelector("#username")
+		const passwordEl = document.querySelector("#password")
 
-		sendLogin.addEventListener("click", async () => {
-			if (username.value && password.value) {
-				await checkLogin(username.value, password.value)
+		let USER
+		let USER_PSW
+
+
+		const checkLogin = async (username, password) => {
+			console.log("logging in..")
+			sendLoginEl.disabled = true
+			usernameEl.disabled = true
+			passwordEl.disabled = true
+			const r = await window.electronAPI.setUserCreds(username, password)
+				.then(async (r) => {
+					if (r) {
+						await window.electronAPI.gotoRoomJoin()
+						return true
+					} else {
+						usernameEl.style.disabled = false
+						passwordEl.style.disabled = false
+						sendLoginEl.style.disabled = false
+						console.log("login failed.")
+						return false
+					}
+				})
+				.catch((error) => {
+					console.log("login failed:", error)
+					usernameEl.disabled = false
+					passwordEl.disabled = false
+					sendLoginEl.disabled = false
+					return false
+				})
+			
+			return r
+		}
+		(async () => {
+			await window.electronAPI.getUser().then((r) => {
+				if (r === false) { 
+					console.log("there is no user.")
+					return 
+				}
+				console.log("there is user.", r)
+				USER = r.user
+				USER_PSW = r.psw
+			})
+			console.log(USER,USER_PSW)
+			if (USER && USER_PSW) {
+				console.log("trying:", USER, USER_PSW)
+				await checkLogin(USER, USER_PSW)
+			}
+		})()
+
+
+		sendLoginEl.addEventListener("click", async () => {
+			if (usernameEl.value && passwordEl.value) {
+				await checkLogin(usernameEl.value, passwordEl.value)
 			}
 		})
-		username.addEventListener("keypress", async (event) => {
-			if (event.key === "Enter" && username.value && password.value) {
-				await checkLogin(username.value, password.value)
+		usernameEl.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && usernameEl.value && passwordEl.value) {
+				await checkLogin(usernameEl.value, passwordEl.value)
 			}
 		})
 
-		password.addEventListener("keypress", async (event) => {
-			if (event.key === "Enter" && username.value && password.value) {
-				await checkLogin(username.value, password.value)
+		passwordEl.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && usernameEl.value && passwordEl.value) {
+				await checkLogin(usernameEl.value, passwordEl.value)
 			}
 		})
 	})

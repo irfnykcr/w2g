@@ -417,7 +417,9 @@ const handleVideoSyncMessage = async (message) => {
 			isClientUpToDate = true
 			
 			if (isInlineWatching) {
-				mainWindow.webContents.send('inline-video-set', { url: message.url })
+				const processedUrl = await checkVideoUrl(message.url)
+				const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+				mainWindow.webContents.send('inline-video-set', { url: finalUrl })
 			} else if (isVLCwatching) {
 				try {
 					const currentUrl = await getVideoUrl_VLC()
@@ -873,7 +875,11 @@ const startVideoInline = async () => {
 const setVideoInline = async (url) => {
 	const result = await makeRequest_videoSync("update_url", {"new_url": url})
 	if (result.status) {
-		mainWindow.webContents.send('inline-video-set', { url })
+		const processedUrl = await checkVideoUrl(url)
+		const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+		mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+		await makeRequest_videoSync("imuptodate")
+		isClientUpToDate = true
 	}
 	return result.status
 }
@@ -954,9 +960,24 @@ ipcMain.handle('inline-video-status-response-sync', async (event, data) => {
 	
 	const { currentTime, isPlaying, currentVideo } = data
 	
-	inlineCurrentTime = currentTime || inlineCurrentTime
-	inlineIsPlaying = isPlaying !== undefined ? isPlaying : inlineIsPlaying
-	inlineCurrentVideo = currentVideo || inlineCurrentVideo
+	let hasStateChanged = false
+	let hasTimeChanged = false
+	let hasVideoChanged = false
+	
+	if (inlineIsPlaying !== isPlaying) {
+		hasStateChanged = true
+		inlineIsPlaying = isPlaying
+	}
+	
+	if (Math.abs(inlineCurrentTime - currentTime) > 1.5) {
+		hasTimeChanged = true
+		inlineCurrentTime = currentTime
+	}
+	
+	if (inlineCurrentVideo !== currentVideo && currentVideo) {
+		hasVideoChanged = true
+		inlineCurrentVideo = currentVideo
+	}
 	
 	sendVideoStatus({
 		status: inlineIsPlaying ? 'playing' : 'paused',
@@ -965,6 +986,34 @@ ipcMain.handle('inline-video-status-response-sync', async (event, data) => {
 		currentTime: inlineCurrentTime,
 		isUpToDate: isClientUpToDate
 	})
+	
+	try {
+		if (hasVideoChanged) {
+			logger.debug("Inline video URL change detected")
+			const result = await makeRequest_videoSync("update_url", {"new_url": currentVideo})
+			if (result.status) {
+				isClientUpToDate = true
+			}
+		}
+		
+		if (hasStateChanged) {
+			logger.debug("Inline video state change detected")
+			const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isPlaying, "new_time": currentTime})
+			if (result.status) {
+				isClientUpToDate = true
+			}
+		}
+		
+		if (hasTimeChanged) {
+			logger.debug("Inline video time change detected")
+			const result = await makeRequest_videoSync("update_time", {"new_time": currentTime})
+			if (result.status) {
+				isClientUpToDate = true
+			}
+		}
+	} catch (error) {
+		logger.debug("Failed to sync inline video status:", error.message)
+	}
 })
 
 const openVLC = async () => {
@@ -1279,7 +1328,7 @@ const startVLCMonitoring = async () => {
 			}
 
 			if (!is_serverURLyoutube && videoVLC !== currentVideo) {
-				logger.debug("Local video change detected")
+				logger.debug("VLC video change detected")
 				const result = await makeRequest_videoSync("update_url", {"new_url": videoVLC})
 				if (result.status) {
 					currentVideo = videoVLC
@@ -1288,7 +1337,7 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentState !== stateVLC) {
-				logger.debug("Local state change detected")
+				logger.debug("VLC state change detected")
 				const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isplayingVLC, "new_time": timeVLC})
 				if (result.status) {
 					currentState = stateVLC
@@ -1297,7 +1346,7 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentTime !== 0 && Math.abs(currentTime - timeVLC) > 1.5) {
-				logger.debug("Local seek detected")
+				logger.debug("VLC seek detected")
 				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC})
 				if (result.status) {
 					lastSentTime = timeVLC
@@ -1341,7 +1390,14 @@ ipcMain.handle('start-inline-video', async (event) => {
 })
 
 ipcMain.handle('set-inline-video', async (event, url) => {
-	return await setVideoInline(url)
+	try {
+		url = url.trim()
+		logger.info("update_url inline", url)
+		return await setVideoInline(url)
+	} catch (error) {
+		logger.error("Error in set-inline-video:", error)
+		return false
+	}
 })
 
 ipcMain.handle('stop-inline-video', async (event) => {

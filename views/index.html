@@ -5,6 +5,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>TURKUAZZ W2G</title>
 	<script src="https://cdn.tailwindcss.com"></script>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 	<link rel="stylesheet" href="../assets/css/style.css">
 </head>
 <body class="bg-dark-bg text-white h-screen flex flex-col overflow-hidden">
@@ -62,21 +63,11 @@
 							</button>
 						</div>
 						<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
-							watch video
-						</button>
-					</div>
-				</div>
-				
-				<div class="mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-gray-700">
-					<h2 class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Currently Watching</h2>
-					<div id="watchers-list" class="space-y-2 max-h-40 sm:max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-gray-700">
-						<div class="text-gray-500 text-lg">No one is watching</div>
-					</div>
+						watch video
+					</button>
 				</div>
 			</div>
-		</section>
-
-		<!-- horizontal resizer -->
+		</section>		<!-- horizontal resizer -->
 		<div id="horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 hidden sm:block" style="height: 4px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- video player section -->
@@ -198,6 +189,23 @@
 			</div>
 		</section>
 	</main>
+
+	<!-- bottom watchers section -->
+	<section id="watchers-section" class="bg-dark-card border-t border-gray-600 transition-all duration-300 transform translate-y-full">
+		<div class="p-3 sm:p-4 flex items-center gap-3">
+			<div id="watchers-list" class="flex gap-2 flex-1 overflow-x-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-gray-700 min-w-0">
+				<div class="text-gray-500 text-sm no-watchers-message">No one is watching</div>
+			</div>
+			<button id="close-watchers-section" class="text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 flex items-center justify-center transition-all duration-200 flex-shrink-0">
+				<i class="fas fa-times"></i>
+			</button>
+		</div>
+	</section>
+
+	<!-- toggle watchers button -->
+	<button id="toggle-watchers" class="fixed bottom-4 right-4 bg-turkuazz hover:bg-turkuazz-dark text-white rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition-all duration-200 z-40">
+		<i class="fas fa-chevron-up text-lg"></i>
+	</button>
 
 	<script src="../assets/js/headers/header.js" defer></script>
 	<script src="../assets/js/tenor.js" defer></script>

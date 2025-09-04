@@ -1,35 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-<script>
-	let ROOM_ID
-	let ROOM_PSW
-	const checkRoom = async (roomid, roompsw) => {
-		return await window.electronAPI.setRoomCreds(roomid, roompsw).then(async (r) => {
-			if (r) {
-				await window.electronAPI.gotoIndex()
-				return true
-			}
-			console.log("login failed.")
-			return false
-		})
-	}
-	(async () => {
-		await window.electronAPI.getRoom().then((r) => {
-			if (r === false) { 
-				console.log("there is no room.")
-				return 
-			}
-			console.log("there is room.", r)
-			ROOM_ID = r.room
-			ROOM_PSW = r.psw
-		})
-		console.log(ROOM_ID,ROOM_PSW)
-		if (ROOM_ID && ROOM_PSW) {
-			console.log("trying:", ROOM_ID, ROOM_PSW)
-			await checkRoom(ROOM_ID, ROOM_PSW)
-		}
-	})()
-</script>
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -59,25 +29,72 @@
 <script src="../assets/js/headers/header.js" defer></script>
 <script>
 	document.addEventListener("DOMContentLoaded", async () => {
-		const sendJoin = document.querySelector("#send-join")
-		const roomid = document.querySelector("#roomid")
-		const password = document.querySelector("#password")
+		const sendJoinEl = document.querySelector("#send-join")
+		const roomidEl = document.querySelector("#roomid")
+		const passwordEl = document.querySelector("#password")
 
-		sendJoin.addEventListener("click", async () => {
-			if (roomid.value) {
-				await checkRoom(roomid.value, password.value)
+		let ROOM_ID
+		let ROOM_PSW
+		const checkRoom = async (roomid, roompsw) => {
+			console.log("joining in..")
+			sendJoinEl.disabled = true
+			roomidEl.disabled = true
+			passwordEl.disabled = true
+			const r = await window.electronAPI.setRoomCreds(roomid, roompsw)
+				.then(async (r) => {
+					if (r) {
+						await window.electronAPI.gotoIndex()
+						return true
+					} else {
+						sendJoinEl.disabled = false
+						roomidEl.disabled = false
+						passwordEl.disabled = false
+						console.log("could not join.")
+						return false
+					}
+				})
+				.catch((error) => {
+					console.log("could not join:", error)
+					sendJoinEl.disabled = false
+					roomidEl.disabled = false
+					passwordEl.disabled = false
+					return false
+				})
+
+			return r
+		}
+		(async () => {
+			await window.electronAPI.getRoom().then((r) => {
+				if (r === false) { 
+					console.log("there is no room.")
+					return 
+				}
+				console.log("there is room.", r)
+				ROOM_ID = r.room
+				ROOM_PSW = r.psw
+			})
+			console.log(ROOM_ID,ROOM_PSW)
+			if (ROOM_ID && ROOM_PSW) {
+				console.log("trying:", ROOM_ID, ROOM_PSW)
+				await checkRoom(ROOM_ID, ROOM_PSW)
+			}
+		})()
+
+		sendJoinEl.addEventListener("click", async () => {
+			if (roomidEl.value) {
+				await checkRoom(roomidEl.value, passwordEl.value)
 			}
 		})
 
-		roomid.addEventListener("keypress", async (event) => {
-			if (event.key === "Enter" && roomid.value) {
-				await checkRoom(roomid.value, password.value)
+		roomidEl.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && roomidEl.value) {
+				await checkRoom(roomidEl.value, passwordEl.value)
 			}
 		})
 
-		password.addEventListener("keypress", async (event) => {
-			if (event.key === "Enter" && roomid.value) {
-				await checkRoom(roomid.value, password.value)
+		passwordEl.addEventListener("keypress", async (event) => {
+			if (event.key === "Enter" && roomidEl.value) {
+				await checkRoom(roomidEl.value, passwordEl.value)
 			}
 		})
 	})

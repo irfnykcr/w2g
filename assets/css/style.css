@@ -35,6 +35,30 @@
   overflow: hidden;
 }
 
+#watchers-section {
+  max-height: 0;
+  overflow: hidden;
+  transform: translateY(-10px);
+  opacity: 0;
+  transition: all 0.3s ease-in-out;
+}
+
+#watchers-section.open {
+  max-height: 200px;
+  transform: translateY(0);
+  opacity: 1;
+}
+
+#watchers-list {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+}
+
+#watchers-list::-webkit-scrollbar {
+  height: 4px;
+}
+
 @media (max-width: 850px) {
   .section-hidden {
     height: 0 !important;

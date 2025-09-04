@@ -64,6 +64,9 @@ document.addEventListener("DOMContentLoaded", () => {
 	const expandChatButton = document.getElementById("expand-chat")
 	const horizontalResizer = document.getElementById("horizontal-resizer")
 	const verticalResizer = document.getElementById("vertical-resizer")
+	const toggleWatchersButton = document.getElementById("toggle-watchers")
+	const watchersSection = document.getElementById("watchers-section")
+	const closeWatchersSectionButton = document.getElementById("close-watchers-section")
 
 	let isUrlExpanded = true
 	let isVideoExpanded = false
@@ -73,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	let isInlineMode = false
 	let inlineVideoInterval = null
 	let isInlineWatching = false
+	let isWatchersPanelOpen = true
 
 	function isMobile() {
 		return window.innerWidth < 850
@@ -245,6 +249,33 @@ document.addEventListener("DOMContentLoaded", () => {
 			expandChatButton.classList.add("hidden")
 		}
 
+		if (isInlineMode) {
+			const openLeftSections = [isUrlExpanded, isVideoExpanded].filter(Boolean).length
+			const leftPanelVisible = openLeftSections > 0
+			
+			if (leftPanelVisible && isChatExpanded) {
+				leftPanel.style.flex = "1"
+				chatSection.style.flex = "1"
+			} else if (leftPanelVisible) {
+				leftPanel.style.flex = "1"
+				chatSection.style.flex = "0"
+			} else if (isChatExpanded) {
+				leftPanel.style.flex = "0"
+				chatSection.style.flex = "1"
+			}
+		} else {
+			if (isUrlExpanded && isChatExpanded) {
+				leftPanel.style.flex = "1"
+				chatSection.style.flex = "1"
+			} else if (isUrlExpanded) {
+				leftPanel.style.flex = "1"
+				chatSection.style.flex = "0"
+			} else if (isChatExpanded) {
+				leftPanel.style.flex = "0"
+				chatSection.style.flex = "1"
+			}
+		}
+
 		horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode && !isMobile()) ? "block" : "none"
 		verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded && !isMobile()) ? "block" : "none"
 	}
@@ -285,5 +316,30 @@ document.addEventListener("DOMContentLoaded", () => {
 		updateLayout()
 	})
 
+	function toggleWatchersPanel() {
+		isWatchersPanelOpen = !isWatchersPanelOpen
+		const icon = toggleWatchersButton.querySelector('i')
+		
+		if (isWatchersPanelOpen) {
+			watchersSection.classList.add('open')
+			if (icon) icon.className = 'fas fa-chevron-down text-lg'
+			toggleWatchersButton.style.display = 'none'
+		} else {
+			watchersSection.classList.remove('open')
+			if (icon) icon.className = 'fas fa-chevron-up text-lg'
+			toggleWatchersButton.style.display = 'flex'
+		}
+	}
+
+	toggleWatchersButton.addEventListener("click", toggleWatchersPanel)
+	closeWatchersSectionButton.addEventListener("click", toggleWatchersPanel)
+
+	watchersSection.classList.add('open')
+	const initialIcon = toggleWatchersButton.querySelector('i')
+	if (initialIcon) initialIcon.className = 'fas fa-chevron-down text-lg'
+	toggleWatchersButton.style.display = 'none'
+
 	updateLayout()
+
+	window.addEventListener('resize', updateLayout)
 })

@@ -458,19 +458,17 @@ function updateWatchersList(watchers) {
     const watchersContainer = document.getElementById('watchers-list')
     if (!watchersContainer) return
     
+    const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
+    if (noWatchersMsg) {
+        noWatchersMsg.remove()
+    }
+    
     if (watchers.length === 0) {
         const existingElements = watchersContainer.querySelectorAll('[data-watcher]')
         existingElements.forEach(el => el.remove())
         
-        if (!watchersContainer.querySelector('.no-watchers-message')) {
-            watchersContainer.innerHTML = '<div class="text-gray-500 text-lg no-watchers-message">No one is watching</div>'
-        }
+        watchersContainer.innerHTML = '<div class="text-gray-500 text-sm no-watchers-message">No one is watching</div>'
         return
-    }
-    
-    const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
-    if (noWatchersMsg) {
-        noWatchersMsg.remove()
     }
     
     const existingElements = new Map()
@@ -483,12 +481,17 @@ function updateWatchersList(watchers) {
     watchers.forEach(watcher => {
         processedWatchers.add(watcher.username)
         
+        const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
+        if (noWatchersMsg) {
+            noWatchersMsg.remove()
+        }
+        
         let watcherElement = existingElements.get(watcher.username)
         const isNewElement = !watcherElement
         
         if (isNewElement) {
             watcherElement = document.createElement('div')
-            watcherElement.className = 'flex flex-col gap-2 p-2 sm:p-3 bg-dark-hover rounded text-sm border-l-4 transition-all duration-200'
+            watcherElement.className = 'flex items-center gap-2 p-2 bg-dark-hover rounded-lg text-sm border-l-4 transition-all duration-200 min-w-0 flex-shrink-0'
             watcherElement.setAttribute('data-watcher', watcher.username)
         }
         
@@ -519,30 +522,28 @@ function updateWatchersList(watchers) {
                 <img 
                     src="${watcher.imageurl}" 
                     alt="${watcher.username}" 
-                    class="w-8 h-8 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
+                    class="w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
                 />
-                <div class="w-8 h-8 rounded-full bg-gray-600 items-center justify-center text-sm font-bold text-turkuazz flex-shrink-0 watcher-fallback" style="display: none;">
+                <div class="w-6 h-6 rounded-full bg-gray-600 items-center justify-center text-xs font-bold text-turkuazz flex-shrink-0 watcher-fallback" style="display: none;">
                     ${watcher.username.charAt(0).toUpperCase()}
                 </div>
                 `
             } else {
                 imageHtml = `
-                <div class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold text-turkuazz flex-shrink-0 watcher-fallback">
+                <div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-turkuazz flex-shrink-0 watcher-fallback">
                     ${watcher.username.charAt(0).toUpperCase()}
                 </div>
                 `
             }
 
             watcherElement.innerHTML = `
-                <div class="flex items-center gap-3">
-                    ${imageHtml}
-                    <div class="flex-1 min-w-0">
-                        <div class="font-semibold text-gray-300 truncate watcher-username">${watcher.username}</div>
-                        <div class="flex items-center gap-2 text-xs text-gray-400">
-                            <span class="watcher-status">${statusIcon} ${formattedTime}</span>
-                            <span class="watcher-sync">${syncIcon} ${syncText}</span>
-                        </div>
+                ${imageHtml}
+                <div class="flex flex-col min-w-0 flex-1">
+                    <div class="font-medium text-gray-300 truncate text-xs watcher-username">${watcher.username}</div>
+                    <div class="flex items-center gap-1 text-xs text-gray-400">
+                        <span class="watcher-status">${statusIcon} ${formattedTime}</span>
+                        <span class="watcher-sync">${syncIcon}</span>
                     </div>
                 </div>
             `
@@ -1037,7 +1038,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const isClosed = data.status === 'closed' || data.status === 'error' || data.status === 'stopped'
 		
 		lastVLCData = data
-		loggerWss.debug('VLC status received:', data)
+		// loggerWss.debug('VLC status received:', data)
 		
 		if (isClosed && isCurrentlyWatching) {
 			isCurrentlyWatching = false
