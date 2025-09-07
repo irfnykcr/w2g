@@ -17,6 +17,18 @@ const loggerIndex = {
 	}
 }
 
+window.electronAPI.onVideoSyncStatus((data) => {
+	const toggleButton = document.getElementById("video-mode-toggle-button")
+	if (toggleButton) {
+		toggleButton.classList.remove("bg-gray-600", "bg-blue-600")
+		if (data.connected) {
+			toggleButton.classList.add("bg-blue-600")
+		} else {
+			toggleButton.classList.add("bg-gray-600")
+		}
+	}
+})
+
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
@@ -69,35 +81,17 @@ document.addEventListener("DOMContentLoaded", () => {
 	const closeWatchersSectionButton = document.getElementById("close-watchers-section")
 
 	let isUrlExpanded = true
-	let isVideoExpanded = false
 	let isChatExpanded = true
+	let isVideoExpanded = false
+	let isInlineMode = false
 	let isResizing = false
 	let resizeType = null
-	let isInlineMode = false
 	let inlineVideoInterval = null
 	let isInlineWatching = false
 	let isWatchersPanelOpen = true
 
 	function isMobile() {
 		return window.innerWidth < 850
-	}
-
-	window.updateVideoMode = async (inlineMode) => {
-		isInlineMode = inlineMode
-		
-		if (inlineMode) {
-			await window.electronAPI.stopVLC()
-			videoPlayer.pause()
-			videoPlayer.src = ""
-			videoPlayer.load()
-			isVideoExpanded = true
-			videoSection.style.display = "flex"
-		} else {
-			await stopInlineVideo()
-			isVideoExpanded = false
-			videoSection.style.display = "none"
-		}
-		updateLayout()
 	}
 
 	const startInlineVideo = async () => {
@@ -128,15 +122,18 @@ document.addEventListener("DOMContentLoaded", () => {
 			inlineVideoInterval = null
 		}
 		
-		videoPlayer.pause()
-		videoPlayer.src = ""
-		videoPlayer.load()
+		if (videoPlayer) {
+			videoPlayer.pause()
+			videoPlayer.src = ""
+			videoPlayer.load()
+		}
 		
 		await window.electronAPI.stopInlineVideo()
 	}
 
 	const setupInlineVideoSync = () => {
 		window.electronAPI.onInlineVideoStart((data) => {
+			if (!videoPlayer) return
 			videoPlayer.src = data.url
 			videoPlayer.currentTime = data.time
 			if (data.isPlaying) {
@@ -148,6 +145,7 @@ document.addEventListener("DOMContentLoaded", () => {
 		})
 		
 		window.electronAPI.onInlineVideoSet((data) => {
+			if (!videoPlayer) return
 			videoPlayer.src = data.url
 			videoPlayer.currentTime = 0
 		})
@@ -158,18 +156,22 @@ document.addEventListener("DOMContentLoaded", () => {
 				clearInterval(inlineVideoInterval)
 				inlineVideoInterval = null
 			}
-			videoPlayer.pause()
-			videoPlayer.src = ""
-			videoPlayer.load()
+			if (videoPlayer) {
+				videoPlayer.pause()
+				videoPlayer.src = ""
+				videoPlayer.load()
+			}
 		})
 		
 		window.electronAPI.onInlineVideoSyncTime((data) => {
+			if (!videoPlayer) return
 			if (Math.abs(videoPlayer.currentTime - data.time) > 2) {
 				videoPlayer.currentTime = data.time
 			}
 		})
 		
 		window.electronAPI.onInlineVideoSyncPlaying((data) => {
+			if (!videoPlayer) return
 			if (data.isPlaying && videoPlayer.paused) {
 				videoPlayer.play()
 			} else if (!data.isPlaying && !videoPlayer.paused) {
@@ -178,7 +180,7 @@ document.addEventListener("DOMContentLoaded", () => {
 		})
 		
 		window.electronAPI.onInlineVideoGetStatusSync(() => {
-			if (!isInlineWatching || !isInlineMode) return
+			if (!isInlineWatching || !isInlineMode || !videoPlayer) return
 			
 			const currentTime = Math.floor(videoPlayer.currentTime || 0)
 			const isPlaying = !videoPlayer.paused
@@ -203,22 +205,22 @@ document.addEventListener("DOMContentLoaded", () => {
 	}
 
 	function doResize(e) {
-		if (!isResizing) return
+		if (!isResizing || !leftPanel) return
 		
 		if (resizeType === "horizontal") {
 			const rect = leftPanel.getBoundingClientRect()
 			const y = e.clientY - rect.top
 			const percent = (y / rect.height) * 100
 			
-			urlSection.style.flex = percent
-			videoSection.style.flex = (100 - percent)
+			if (urlSection) urlSection.style.flex = percent
+			if (videoSection) videoSection.style.flex = (100 - percent)
 		} else {
 			const rect = main.getBoundingClientRect()
 			const x = e.clientX - rect.left
 			const percent = (x / rect.width) * 100
 			
-			leftPanel.style.flex = percent
-			chatSection.style.flex = (100 - percent)
+			if (leftPanel) leftPanel.style.flex = percent
+			if (chatSection) chatSection.style.flex = (100 - percent)
 		}
 	}
 
@@ -229,24 +231,24 @@ document.addEventListener("DOMContentLoaded", () => {
 		document.body.style.userSelect = ""
 	}
 
-	horizontalResizer.onmousedown = (e) => startResize(e, "horizontal")
-	verticalResizer.onmousedown = (e) => startResize(e, "vertical")
+	if (horizontalResizer) horizontalResizer.onmousedown = (e) => startResize(e, "horizontal")
+	if (verticalResizer) verticalResizer.onmousedown = (e) => startResize(e, "vertical")
 	document.onmousemove = doResize
 	document.onmouseup = stopResize
 
 	function updateLayout() {
 		const hasCollapsed = !isUrlExpanded || !isVideoExpanded || !isChatExpanded
 
-		if (hasCollapsed) {
+		if (hasCollapsed && collapsedToggles) {
 			collapsedToggles.classList.remove("hidden")
-			expandUrlButton.classList.toggle("hidden", isUrlExpanded)
-			expandVideoButton.classList.toggle("hidden", isVideoExpanded || !isInlineMode)
-			expandChatButton.classList.toggle("hidden", isChatExpanded)
-		} else {
+			if (expandUrlButton) expandUrlButton.classList.toggle("hidden", isUrlExpanded)
+			if (expandVideoButton) expandVideoButton.classList.toggle("hidden", isVideoExpanded || !isInlineMode)
+			if (expandChatButton) expandChatButton.classList.toggle("hidden", isChatExpanded)
+		} else if (collapsedToggles) {
 			collapsedToggles.classList.add("hidden")
-			expandUrlButton.classList.add("hidden")
-			expandVideoButton.classList.add("hidden")
-			expandChatButton.classList.add("hidden")
+			if (expandUrlButton) expandUrlButton.classList.add("hidden")
+			if (expandVideoButton) expandVideoButton.classList.add("hidden")
+			if (expandChatButton) expandChatButton.classList.add("hidden")
 		}
 
 		if (isInlineMode) {
@@ -254,91 +256,146 @@ document.addEventListener("DOMContentLoaded", () => {
 			const leftPanelVisible = openLeftSections > 0
 			
 			if (leftPanelVisible && isChatExpanded) {
-				leftPanel.style.flex = "1"
-				chatSection.style.flex = "1"
+				if (leftPanel) leftPanel.style.flex = "1"
+				if (chatSection) chatSection.style.flex = "1"
 			} else if (leftPanelVisible) {
-				leftPanel.style.flex = "1"
-				chatSection.style.flex = "0"
+				if (leftPanel) leftPanel.style.flex = "1"
+				if (chatSection) chatSection.style.flex = "0"
 			} else if (isChatExpanded) {
-				leftPanel.style.flex = "0"
-				chatSection.style.flex = "1"
+				if (leftPanel) leftPanel.style.flex = "0"
+				if (chatSection) chatSection.style.flex = "1"
 			}
 		} else {
 			if (isUrlExpanded && isChatExpanded) {
-				leftPanel.style.flex = "1"
-				chatSection.style.flex = "1"
+				if (leftPanel) leftPanel.style.flex = "1"
+				if (chatSection) chatSection.style.flex = "1"
 			} else if (isUrlExpanded) {
-				leftPanel.style.flex = "1"
-				chatSection.style.flex = "0"
+				if (leftPanel) leftPanel.style.flex = "1"
+				if (chatSection) chatSection.style.flex = "0"
 			} else if (isChatExpanded) {
-				leftPanel.style.flex = "0"
-				chatSection.style.flex = "1"
+				if (leftPanel) leftPanel.style.flex = "0"
+				if (chatSection) chatSection.style.flex = "1"
 			}
 		}
 
-		horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode && !isMobile()) ? "block" : "none"
-		verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded && !isMobile()) ? "block" : "none"
-	}
-
-	urlToggleButton.addEventListener("click", () => {
-		isUrlExpanded = false
-		urlSection.style.display = "none"
-		updateLayout()
-	})
-
-	videoToggleButton.addEventListener("click", () => {
-		isVideoExpanded = false
-		videoSection.style.display = "none"
-		updateLayout()
-	})
-
-	chatToggleButton.addEventListener("click", () => {
-		isChatExpanded = false
-		chatSection.style.display = "none"
-		updateLayout()
-	})
-
-	expandUrlButton.addEventListener("click", () => {
-		isUrlExpanded = true
-		urlSection.style.display = "flex"
-		updateLayout()
-	})
-
-	expandVideoButton.addEventListener("click", () => {
-		isVideoExpanded = true
-		videoSection.style.display = "flex"
-		updateLayout()
-	})
-
-	expandChatButton.addEventListener("click", () => {
-		isChatExpanded = true
-		chatSection.style.display = "flex"
-		updateLayout()
-	})
-
-	function toggleWatchersPanel() {
-		isWatchersPanelOpen = !isWatchersPanelOpen
-		const icon = toggleWatchersButton.querySelector('i')
-		
-		if (isWatchersPanelOpen) {
-			watchersSection.classList.add('open')
-			if (icon) icon.className = 'fas fa-chevron-down text-lg'
-			toggleWatchersButton.style.display = 'none'
-		} else {
-			watchersSection.classList.remove('open')
-			if (icon) icon.className = 'fas fa-chevron-up text-lg'
-			toggleWatchersButton.style.display = 'flex'
+		if (horizontalResizer) {
+			horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode && !isMobile()) ? "block" : "none"
+		}
+		if (verticalResizer) {
+			verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded && !isMobile()) ? "block" : "none"
 		}
 	}
 
-	toggleWatchersButton.addEventListener("click", toggleWatchersPanel)
-	closeWatchersSectionButton.addEventListener("click", toggleWatchersPanel)
+	if (urlToggleButton) {
+		urlToggleButton.addEventListener("click", () => {
+			isUrlExpanded = false
+			if (urlSection) urlSection.style.display = "none"
+			updateLayout()
+		})
+	}
 
-	watchersSection.classList.add('open')
-	const initialIcon = toggleWatchersButton.querySelector('i')
+	if (videoToggleButton) {
+		videoToggleButton.addEventListener("click", () => {
+			isVideoExpanded = false
+			if (videoSection) videoSection.style.display = "none"
+			updateLayout()
+		})
+	}
+
+	if (chatToggleButton) {
+		chatToggleButton.addEventListener("click", () => {
+			isChatExpanded = false
+			if (chatSection) chatSection.style.display = "none"
+			updateLayout()
+		})
+	}
+
+	if (expandUrlButton) {
+		expandUrlButton.addEventListener("click", () => {
+			isUrlExpanded = true
+			if (urlSection) urlSection.style.display = "flex"
+			updateLayout()
+		})
+	}
+
+	if (expandVideoButton) {
+		expandVideoButton.addEventListener("click", () => {
+			isVideoExpanded = true
+			if (videoSection) videoSection.style.display = "flex"
+			updateLayout()
+		})
+	}
+
+	if (expandChatButton) {
+		expandChatButton.addEventListener("click", () => {
+			isChatExpanded = true
+			if (chatSection) chatSection.style.display = "flex"
+			updateLayout()
+		})
+	}
+
+	function toggleWatchersPanel() {
+		isWatchersPanelOpen = !isWatchersPanelOpen
+		const icon = toggleWatchersButton ? toggleWatchersButton.querySelector('i') : null
+		
+		if (isWatchersPanelOpen) {
+			if (watchersSection) watchersSection.classList.add('open')
+			if (icon) icon.className = 'fas fa-chevron-down text-lg'
+			if (toggleWatchersButton) toggleWatchersButton.style.display = 'none'
+		} else {
+			if (watchersSection) watchersSection.classList.remove('open')
+			if (icon) icon.className = 'fas fa-chevron-up text-lg'
+			if (toggleWatchersButton) toggleWatchersButton.style.display = 'flex'
+		}
+	}
+
+	if (toggleWatchersButton) {
+		toggleWatchersButton.addEventListener("click", toggleWatchersPanel)
+	}
+	if (closeWatchersSectionButton) {
+		closeWatchersSectionButton.addEventListener("click", toggleWatchersPanel)
+	}
+
+	if (watchersSection) watchersSection.classList.add('open')
+	const initialIcon = toggleWatchersButton ? toggleWatchersButton.querySelector('i') : null
 	if (initialIcon) initialIcon.className = 'fas fa-chevron-down text-lg'
-	toggleWatchersButton.style.display = 'none'
+	if (toggleWatchersButton) toggleWatchersButton.style.display = 'none'
 
+	const initVideoSyncStatus = () => {
+		const toggleButton = document.getElementById("video-mode-toggle-button")
+		if (toggleButton) {
+			toggleButton.classList.remove("bg-blue-600")
+			if (!toggleButton.classList.contains("bg-gray-600")) {
+				toggleButton.classList.add("bg-gray-600")
+			}
+		}
+	}
+
+	window.updateVideoMode = async (inlineMode) => {
+		isInlineMode = inlineMode
+		
+		if (inlineMode) {
+			await window.electronAPI.stopVLC()
+			if (videoPlayer) {
+				videoPlayer.pause()
+				videoPlayer.src = ""
+				videoPlayer.load()
+			}
+			isVideoExpanded = true
+			if (videoSection) {
+				videoSection.style.display = "flex"
+			}
+		} else {
+			await stopInlineVideo()
+			isVideoExpanded = false
+			if (videoSection) {
+				videoSection.style.display = "none"
+			}
+		}
+		updateLayout()
+	}
+
+	initVideoSyncStatus()
 	updateLayout()
 
 	window.addEventListener('resize', updateLayout)

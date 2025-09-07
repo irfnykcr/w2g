@@ -22,7 +22,8 @@ app.add_middleware(
 
 connection_pool = pooling.MySQLConnectionPool(
 	pool_name="mypool", 
-	pool_size=5,
+	pool_size=32,
+	pool_reset_session=True,
 	host=getenv("MYSQL_HOST"),
 	user=getenv("MYSQL_USER"),
 	password=getenv("MYSQL_PASSWORD"),
@@ -160,16 +161,19 @@ class ChatApp:
 			for user_data in self.active_rooms[roomid]:
 				websocket = user_data["websocket"]
 				try:
-					await websocket.send_text(dumps(data))
+					if websocket.client_state.value == 1:  # CONNECTED state
+						await websocket.send_text(dumps(data))
 				except Exception as e:
 					print(f"Error sending watchers update to {user_data['username']}: {e}")
 
-	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str,  history: bool):
+	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
 		self.active_rooms[roomid].append({"websocket": websocket, "username": user})
-		if history:
-			await self.send_history_to_websocket(websocket, roomid)
+		if lastMessageDate > 0:
+			await self.send_history_to_websocket(websocket, roomid, lastMessageDate)
+		else:
+			await self.send_history_to_websocket(websocket, roomid, limit=15)
 		await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
 		await self.send_watchers_to_room(roomid)
 
@@ -181,8 +185,8 @@ class ChatApp:
 			print("room is not active.")
 			return
 			
-		await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
 		if user:
+			await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
 			if roomid in self.room_watchers:
 				self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
 
@@ -205,6 +209,9 @@ class ChatApp:
 		elif data.get("type") == "delete_message":
 			await self.handle_message_deletion(websocket, data)
 			return
+		elif data.get("type") == "load_more_messages":
+			await self.handle_load_more_messages(websocket, data)
+			return
 			
 		message = data.get("message")
 		reply_to = data.get("reply_to")
@@ -219,6 +226,19 @@ class ChatApp:
 			await self.send_message_to_websocket(websocket, "User not found.")
 			return
 		await self.send_message_to_room(roomid, message, sender=user, reply_to_id=reply_to)
+
+	async def handle_load_more_messages(self, websocket: WebSocket, data):
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		
+		if not roomid or not user:
+			return
+		
+		before_message_id = data.get("before_message_id")
+		if not before_message_id:
+			return
+		
+		await self.send_history_to_websocket(websocket, roomid, before_message_id=before_message_id, limit=15)
 
 	async def handle_reaction(self, websocket: WebSocket, data):
 		user = self.get_user_from_websocket(websocket)
@@ -272,7 +292,8 @@ class ChatApp:
 						for user_data in self.active_rooms[roomid]:
 							websocket_user = user_data["websocket"]
 							try:
-								await websocket_user.send_text(dumps(data))
+								if websocket_user.client_state.value == 1:  # CONNECTED state
+									await websocket_user.send_text(dumps(data))
 							except Exception as e:
 								print(f"Error sending reaction removal to {user_data['username']}: {e}")
 					return
@@ -304,7 +325,8 @@ class ChatApp:
 				for user_data in self.active_rooms[roomid]:
 					websocket_user = user_data["websocket"]
 					try:
-						await websocket_user.send_text(dumps(data))
+						if websocket_user.client_state.value == 1:  # CONNECTED state
+							await websocket_user.send_text(dumps(data))
 					except Exception as e:
 						print(f"Error sending reaction to {user_data['username']}: {e}")
 		except Exception as e:
@@ -370,7 +392,8 @@ class ChatApp:
 				for user_data in self.active_rooms[roomid]:
 					websocket_user = user_data["websocket"]
 					try:
-						await websocket_user.send_text(dumps(data))
+						if websocket_user.client_state.value == 1:  # CONNECTED state
+							await websocket_user.send_text(dumps(data))
 					except Exception as e:
 						print(f"Error sending message deletion to {user_data['username']}: {e}")
 		except Exception as e:
@@ -380,21 +403,65 @@ class ChatApp:
 				cursor.close()
 			conn.close()
 
-	async def send_history_to_websocket(self, websocket: WebSocket, roomid: str):
+	async def send_history_to_websocket(self, websocket: WebSocket, roomid: str, lastMessageDate: float = 0, limit = 15, before_message_id = None):
 		try:
 			conn = get_db_connection()
 			if not conn:
 				print("Failed to get database connection")
 				return
+			if limit > 15 or limit < 1:
+				print("limit error:", limit)
+				return
 			cursor = None
 			try:
 				cursor = conn.cursor()
-				cursor.execute(
-					"SELECT id, user, message, message_type, date, reply_to, removed FROM messages WHERE roomid = %s ORDER BY id ASC",
-					(roomid,)
-				)
+				
+				if lastMessageDate > 0:
+					query = "SELECT id, user, message, message_type, date, reply_to, removed FROM messages \
+						WHERE roomid = %s AND UNIX_TIMESTAMP(date) > %s ORDER BY id ASC"
+					params = (roomid, lastMessageDate)
+				elif before_message_id:
+					query = """
+						SELECT id, user, message, message_type, date, reply_to, removed 
+						FROM messages 
+						WHERE roomid = %s AND id < %s AND message_type = 'new_message'
+						ORDER BY id DESC LIMIT %s
+					"""
+					params = (roomid, before_message_id, limit)
+				else:
+					query = """
+						SELECT id, user, message, message_type, date, reply_to, removed 
+						FROM messages 
+						WHERE roomid = %s AND message_type = 'new_message'
+						ORDER BY id DESC LIMIT %s
+					"""
+					params = (roomid, limit)
+				
+				cursor.execute(query, params)
+				message_rows = cursor.fetchall()
+				
 				messages = []
-				for row in cursor.fetchall():
+				reaction_rows = []
+				
+				if message_rows:
+					message_ids = [str(row[0]) for row in message_rows]
+					if len(message_ids) > 0:
+						placeholders = ','.join(['%s'] * len(message_ids))
+						reaction_query = f"""
+							SELECT id, user, message, message_type, date, reply_to, removed
+							FROM messages 
+							WHERE roomid = %s AND message_type = 'new_reaction' AND reply_to IN ({placeholders})
+						"""
+						cursor.execute(reaction_query, [roomid] + message_ids)
+						reaction_rows = cursor.fetchall()
+				
+				all_rows = list(message_rows) + list(reaction_rows)
+				all_rows.sort(key=lambda x: x[0])
+				
+				if before_message_id:
+					all_rows = list(reversed(all_rows))
+				
+				for row in all_rows:
 					thedate = row[4].timestamp()
 					reply_to_data = None
 
@@ -432,11 +499,32 @@ class ChatApp:
 						"is_deleted": bool(row[6]) # removed column
 					})
 				
+				has_more = False
+				if limit and len(message_rows) == limit:
+					check_cursor = conn.cursor()
+					if before_message_id:
+						oldest_message_id = min(row[0] for row in message_rows)
+						check_cursor.execute(
+							"SELECT COUNT(*) FROM messages WHERE roomid = %s AND id < %s AND message_type = 'new_message'",
+							(roomid, oldest_message_id)
+						)
+					else:
+						oldest_message_id = min(row[0] for row in message_rows)
+						check_cursor.execute(
+							"SELECT COUNT(*) FROM messages WHERE roomid = %s AND id < %s AND message_type = 'new_message'",
+							(roomid, oldest_message_id)
+						)
+					has_more = check_cursor.fetchone()[0] > 0
+					check_cursor.close()
+				
 				data = {
 					"type": "room_history",
 					"messages": messages,
+					"has_more": has_more,
+					"is_pagination": before_message_id is not None
 				}
-				await websocket.send_text(dumps(data))
+				if websocket.client_state.value == 1:  # CONNECTED state
+					await websocket.send_text(dumps(data))
 			finally:
 				if cursor:
 					cursor.close()
@@ -452,7 +540,8 @@ class ChatApp:
 			"date": time(),
 		}
 		try:
-			await websocket.send_text(dumps(data))
+			if websocket.client_state.value == 1:  # CONNECTED state
+				await websocket.send_text(dumps(data))
 		except Exception as e:
 			print(f"Error sending message: {e}")
 
@@ -525,7 +614,8 @@ class ChatApp:
 			for user_data in self.active_rooms[roomid]:
 				websocket = user_data["websocket"]
 				try:
-					await websocket.send_text(dumps(data))
+					if websocket.client_state.value == 1:  # CONNECTED state
+						await websocket.send_text(dumps(data))
 				except Exception as e:
 					print(f"Error sending message to {user_data['username']}: {e}")
 			# maybe disconnect unavailable users?
@@ -542,10 +632,10 @@ async def websocket_endpoint(
 	psw: str = Query(...),
 	roomid: str = Query(...),
 	roompsw: str = Query(...),
-	history: str = Query(...),
+	lastMessageDate: float = Query(0),
 ):
 	print("connection")
-	if not (user and psw and roomid and roompsw and history):
+	if not (user and psw and roomid and roompsw):
 		print("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
 		return
@@ -573,18 +663,25 @@ async def websocket_endpoint(
 		print(f"Error sending room info: {e}")
 
 	try:
-		await chat.handle_connect(websocket, user, roomid, (history == "1"))
+		await chat.handle_connect(websocket, user, roomid, lastMessageDate)
 
 		while True:
-			data = await websocket.receive_text()
 			try:
-				message_data = loads(data)
-				if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message"]:
-					await chat.handle_message(websocket, message_data)
-			except JSONDecodeError:
-				await chat.send_message_to_websocket(websocket, "Invalid message format")
+				data = await websocket.receive_text()
+				try:
+					message_data = loads(data)
+					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages"]:
+						await chat.handle_message(websocket, message_data)
+				except JSONDecodeError:
+					await chat.send_message_to_websocket(websocket, "Invalid message format")
+				except Exception as e:
+					print(f"Error handling message: {e}")
+			except WebSocketDisconnect:
+				break
 			except Exception as e:
-				print(f"Error handling message: {e}")
+				print(f"Error receiving message: {e}")
+				break
+		await chat.handle_disconnect(websocket)
 
 	except WebSocketDisconnect:
 		await chat.handle_disconnect(websocket)

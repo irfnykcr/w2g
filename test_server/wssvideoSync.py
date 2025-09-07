@@ -25,7 +25,8 @@ app.add_middleware(
 
 connection_pool = pooling.MySQLConnectionPool(
 	pool_name="mypool", 
-	pool_size=5,
+	pool_size=32,
+	pool_reset_session=True,
 	host=getenv("MYSQL_HOST"),
 	user=getenv("MYSQL_USER"),
 	password=getenv("MYSQL_PASSWORD"),
@@ -444,18 +445,24 @@ async def websocket_endpoint(
 		await video_sync.handle_connect(websocket, user, roomid)
 
 		while True:
-			data = await websocket.receive_text()
 			try:
-				message_data = loads(data)
-				await video_sync.handle_message(websocket, message_data)
-			except JSONDecodeError:
-				await websocket.send_text(dumps({
-					"type": "error",
-					"message": "Invalid message format"
-				}))
+				data = await websocket.receive_text()
+				try:
+					message_data = loads(data)
+					await video_sync.handle_message(websocket, message_data)
+				except JSONDecodeError:
+					await websocket.send_text(dumps({
+						"type": "error",
+						"message": "Invalid message format"
+					}))
+				except Exception as e:
+					print(f"Error handling message: {e}")
+			except WebSocketDisconnect:
+				break
 			except Exception as e:
-				print(f"Error handling message: {e}")
-
+				print(f"Error receiving message: {e}")
+				break
+		await video_sync.handle_disconnect(websocket)
 	except WebSocketDisconnect:
 		await video_sync.handle_disconnect(websocket)
 	except Exception as e:

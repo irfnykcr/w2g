@@ -29,6 +29,9 @@ let messagesById = new Map()
 let messageReactions = new Map()
 let ws
 let USER 
+let hasMoreMessages = true
+let isLoadingMessages = false
+let oldestMessageId = null 
 
 // focus tracking and notification system
 let isWindowFocused = true
@@ -636,24 +639,29 @@ document.addEventListener("DOMContentLoaded", async () => {
 		loggerWss.info("reload2")
 		window.electronAPI.gotoRoomJoin()
 	})
-
-	const joinquery = new URLSearchParams({
-		user: USER,
-		psw: USER_PSW,
-		roomid: ROOM_ID,
-		roompsw: ROOM_PSW,
-	}).toString()
 	
 
 	let reconnectAttempts = 0
+	let lastMessageDate = 0
+	let waitingForMessage = 0
 
-	function connectWebSocket(reconnectDelay=0, history="0") {
+	function connectWebSocket(reconnectDelay=0) {
+		if (chatRoomName && !chatRoomName.textContent.includes("(connecting..)")){
+			chatRoomName.textContent += " (connecting..)"
+		}
 		const maxReconnectAttempts = 10
 		if (reconnectAttempts < maxReconnectAttempts) {
 			reconnectAttempts++
 			loggerWss.info(`Attempting to connect... (${reconnectAttempts}/${maxReconnectAttempts})`)
 			setTimeout(() => {
-				const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${joinquery}&history=${history}`)
+				const queryParams = new URLSearchParams({
+					user: USER,
+					psw: USER_PSW,
+					roomid: ROOM_ID,
+					roompsw: ROOM_PSW,
+					lastMessageDate: lastMessageDate
+				}).toString()
+				const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${queryParams}`)
 				attachSocketEvents(newSocket)
 			}, reconnectDelay)
 		} else {
@@ -665,6 +673,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 	function attachSocketEvents(socket) {
 		socket.onopen = () => {
 			loggerWss.info("WebSocket connection established")
+			if (chatRoomName && chatRoomName.textContent.includes("(connecting..)")){
+				chatRoomName.textContent = chatRoomName.textContent.replace(" (connecting..)", "")
+			}
 			
 			setTimeout(() => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
@@ -681,6 +692,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 		socket.onmessage = (r) => {
 			const data = JSON.parse(r.data)
+			waitingForMessage = 0
 			// loggerWss.debug("Message received", data)
 
 			if (data.type == "room_info") {
@@ -695,31 +707,89 @@ document.addEventListener("DOMContentLoaded", async () => {
 			} else if (data.type == "message_deleted") {
 				handleMessageDeletion(data)
 			} else if (data.type == "room_history") {
-				data.messages.forEach((message) => {
-					if (message.message_type === "new_reaction") {
-						const targetMessageId = message.reply_to?.id
-						if (targetMessageId) {
-							if (!messageReactions.has(targetMessageId)) {
-								messageReactions.set(targetMessageId, {})
+				const isPagination = data.is_pagination || false
+				hasMoreMessages = data.has_more || false
+				
+				if (isPagination) {
+					const messagesContainer = document.getElementById("chat-content")
+					const scrollTop = messagesContainer.scrollTop
+					const scrollHeight = messagesContainer.scrollHeight
+					
+					data.messages.forEach((message) => {
+						if (message.message_type === "new_reaction") {
+							const targetMessageId = message.reply_to?.id
+							if (targetMessageId) {
+								if (!messageReactions.has(targetMessageId)) {
+									messageReactions.set(targetMessageId, {})
+								}
+								
+								const reactions = messageReactions.get(targetMessageId)
+								const emoji = message.message
+								const user = message.user
+								
+								if (!reactions[emoji]) {
+									reactions[emoji] = { users: [], count: 0 }
+								}
+								reactions[emoji].users.push(user)
+								reactions[emoji].count++
 							}
-							
-							const reactions = messageReactions.get(targetMessageId)
-							const emoji = message.message
-							const user = message.user
-							
-							if (!reactions[emoji]) {
-								reactions[emoji] = { users: [], count: 0 }
+						}
+						addMessage(message, true, true)
+					})
+					
+					messageReactions.forEach((reactions, messageId) => {
+						updateMessageReactions(messageId)
+					})
+					
+					const newScrollHeight = messagesContainer.scrollHeight
+					messagesContainer.scrollTop = scrollTop + (newScrollHeight - scrollHeight)
+				} else {
+					data.messages.forEach((message) => {
+						if (message.message_type === "new_reaction") {
+							const targetMessageId = message.reply_to?.id
+							if (targetMessageId) {
+								if (!messageReactions.has(targetMessageId)) {
+									messageReactions.set(targetMessageId, {})
+								}
+								
+								const reactions = messageReactions.get(targetMessageId)
+								const emoji = message.message
+								const user = message.user
+								
+								if (!reactions[emoji]) {
+									reactions[emoji] = { users: [], count: 0 }
+								}
+								reactions[emoji].users.push(user)
+								reactions[emoji].count++
 							}
-							reactions[emoji].users.push(user)
-							reactions[emoji].count++
+						}
+						addMessage(message, true)
+					})
+					
+					messageReactions.forEach((reactions, messageId) => {
+						updateMessageReactions(messageId)
+					})
+				}
+				
+				if (data.messages.length > 0) {
+					const actualMessages = data.messages.filter(msg => msg.message_type === "new_message")
+					
+					if (actualMessages.length > 0) {
+						if (isPagination) {
+							const oldestActualMessage = actualMessages.reduce((oldest, msg) => 
+								msg.id < oldest.id ? msg : oldest
+							)
+							if (!oldestMessageId || oldestActualMessage.id < oldestMessageId) {
+								oldestMessageId = oldestActualMessage.id
+							}
+						} else {
+							const firstActualMessage = actualMessages[0]
+							oldestMessageId = firstActualMessage.id
 						}
 					}
-					addMessage(message, true)
-				})
+				}
 				
-				messageReactions.forEach((reactions, messageId) => {
-					updateMessageReactions(messageId)
-				})
+				isLoadingMessages = false
 			} else if (data.type == "watchers_update") {
 				updateWatchersList(data.watchers)
 			} else {
@@ -739,7 +809,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		ws = socket
 	}
 
-	connectWebSocket(0, "1")
+	connectWebSocket(0)
 
 	const messages = document.getElementById("chat-content")
 	const messageButton = document.getElementById("send-chatmessage")
@@ -756,6 +826,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 		messages.addEventListener('scroll', () => {
 			if (isManualScroll && hasUnreadMessages) {
 				clearNotificationGlow()
+			}
+			
+			if (messages.scrollTop === 0 && hasMoreMessages && !isLoadingMessages) {
+				loadMoreMessages()
 			}
 		})
 		
@@ -778,6 +852,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 		})
 	}
 
+	function loadMoreMessages() {
+		if (!oldestMessageId || isLoadingMessages || !hasMoreMessages) {
+			return
+		}
+		
+		isLoadingMessages = true
+		
+		if (ws && ws.readyState === WebSocket.OPEN) {
+			const data = {
+				type: "load_more_messages",
+				before_message_id: oldestMessageId
+			}
+			ws.send(JSON.stringify(data))
+			loggerWss.debug(`Loading more messages before ID: ${oldestMessageId}`)
+		}
+	}
+
 	function sendMessage() {
 		const message = messageInput.value.trim()
 		if (message) {
@@ -791,6 +882,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 
 			ws.send(JSON.stringify(messageData))
+			waitingForMessage++
+			const sentMessage = waitingForMessage
+			setTimeout(() => {
+				if (waitingForMessage === sentMessage){
+					loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
+					ws.close()
+				}
+			}, 3000);
 			messageInput.value = ""
 			
 			if (replyState.isReplying) {
@@ -799,16 +898,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 	}
 
-	function addMessage(data, isHistoryMessage = false) {
+	function addMessage(data, isHistoryMessage = false, isPagination = false) {
 		const messageId = data.id
 		const user = data.user
 		const text = data.message
 		const messageType = data.message_type || "new_message"
 		const isDeleted = data.is_deleted || false
 		
-		// if (messageType != "new_message"){
-		// 	loggerWss.debug(messageType)
-		// }
+		if (data.date && data.date > lastMessageDate) {
+			lastMessageDate = data.date
+		}
+		
 		const date = new Date(data.date * 1000).toLocaleString()
 		const replyTo = data.reply_to || null
 
@@ -962,7 +1062,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 		}
 
-		messages.appendChild(messageDiv)
+		if (isPagination) {
+			messages.insertBefore(messageDiv, messages.firstChild)
+		} else {
+			messages.appendChild(messageDiv)
+		}
 		
 		// deleted styling
 		if (isDeleted) {
@@ -985,10 +1089,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 		}
 		
-		if (window.scrollMessagesToBottom) {
-			window.scrollMessagesToBottom()
-		} else {
-			messages.scrollTop = messages.scrollHeight
+		if (!isPagination) {
+			if (window.scrollMessagesToBottom) {
+				window.scrollMessagesToBottom()
+			} else {
+				messages.scrollTop = messages.scrollHeight
+			}
 		}
 	}
 

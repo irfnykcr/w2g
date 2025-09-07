@@ -58,6 +58,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	},
 	sendInlineVideoStatusSync: (data) => ipcRenderer.invoke('inline-video-status-response-sync', data),
 	
+	onVideoSyncStatus: (callback) => {
+		ipcRenderer.on('video-sync-status', (_, data) => {
+			callback(data)
+		})
+	},
+	
 	onServerStatus: (callback) => {
 		ipcRenderer.on('server-status', (_, data) => {
 			callback(data)

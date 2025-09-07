@@ -42,7 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
 						<label class="flex items-center cursor-pointer">
 							<input type="checkbox" id="video-mode-switch" class="sr-only">
 							<div class="relative">
-								<div class="w-10 h-6 bg-gray-600 rounded-full shadow-inner transition-colors"></div>
+								<div id="video-mode-toggle-button" class="w-10 h-6 bg-gray-600 rounded-full shadow-inner transition-colors"></div>
 								<div class="dot absolute w-4 h-4 bg-white rounded-full shadow left-0 top-1 transition-transform"></div>
 							</div>
 							<span class="ml-2 text-xs text-gray-300" id="video-mode-label">VLC</span>

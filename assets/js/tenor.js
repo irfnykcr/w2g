@@ -152,6 +152,9 @@ function showGifModal() {
 	
 	if (!modal || !button) return
 
+	const modalSearchInputEl = modal.querySelector('#gif-search')
+	modalSearchInputEl.value = ""
+
 	modal.classList.remove('hidden')
 	positionModalAboveButton(modal, button)
 }
