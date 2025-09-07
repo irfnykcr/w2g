@@ -878,7 +878,6 @@ const startVideoInline = async () => {
 		isUpToDate: true
 	})
 	
-
 	startInlineMonitoring()
 	return true
 }
