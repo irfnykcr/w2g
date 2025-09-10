@@ -1,7 +1,7 @@
 {
-	"VLC_PORT": 8093,
-	"SERVER_ENDPOINT": "w2g.turkuazz.vip",
-	"VLC_FINDER": true,
-	"VLC_PATH": "/usr/bin/vlc",
-	"VLC_HTTP_PASS": "w1Vam0l3chtgrRWP"
+    "VLC_PORT": 8093,
+    "SERVER_ENDPOINT": "w2g.turkuazz.vip",
+    "VLC_FINDER": true,
+    "VLC_PATH": "/usr/bin/vlc",
+    "VLC_HTTP_PASS": "w1Vam0l3chtgrRWP"
 }

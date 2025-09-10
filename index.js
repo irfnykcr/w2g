@@ -56,7 +56,9 @@ ipcMain.handle('get-serverendpoint', (event) => {
 })
 
 let VLC_PORT = appConfig.VLC_PORT
+let VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
 let VLC_PATH
+
 if (appConfig.VLC_FINDER) {
 	let possiblePaths = []
 	if (process.platform === 'win32') {
@@ -86,7 +88,6 @@ if (appConfig.VLC_FINDER) {
 	VLC_PATH = appConfig.VLC_PATH
 	logger.info("----VLC PATH from APPCONFIG:", VLC_PATH)
 }
-const VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
 
 let youtubeUrlCache = new Map()
 const YOUTUBE_CACHE_TTL = 300000
@@ -249,7 +250,8 @@ const createWindow = async () => {
 			preload: path.join(__dirname, 'preload.js')
 		}
 	})
-	win.webContents.on('context-menu', (event, params) => {
+
+	win.webContents.on('context-menu', (e, params) => {
 		const menu = Menu.buildFromTemplate([
 			{ role: 'cut' },
 			{ role: 'copy' },
@@ -520,6 +522,9 @@ ipcMain.on('goto-index', () => {
 ipcMain.on('goto-login', () => {
 	mainWindow.loadFile('views/login.html')
 })
+ipcMain.on('goto-config', () => {
+	mainWindow.loadFile('views/config.html')
+})
 
 const makeRequest_server = async (url, json) => {
 	if (!json) json = {}
@@ -718,6 +723,34 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		return result.status
 	} catch (error) {
 		logger.error("Error in setvideo-vlc:", error)
+		return false
+	}
+})
+
+ipcMain.handle('get-config', async () => {
+	return JSON.parse(JSON.stringify(appConfig))
+})
+
+ipcMain.handle('save-config', async (event, vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass) => {
+	try {
+		appConfig["VLC_PORT"] = vlcport
+		appConfig["SERVER_ENDPOINT"] = serverendpoint
+		appConfig["VLC_FINDER"] = vlcfinder
+		appConfig["VLC_PATH"] = vlcpath
+		appConfig["VLC_HTTP_PASS"] = vlchttppass
+		
+		fs.writeFileSync(appConfigPath, JSON.stringify(appConfig, null, 4), 'utf-8')
+		
+		VLC_PORT = vlcport
+		VLC_HTTP_PASS = vlchttppass
+		if (!vlcfinder) {
+			VLC_PATH = vlcpath
+		}
+		
+		logger.info("Config saved successfully:", appConfig)
+		return true
+	} catch (error) {
+		logger.error("Failed to save config:", error.message)
 		return false
 	}
 })

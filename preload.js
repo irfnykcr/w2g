@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	getRoom: () => ipcRenderer.invoke('get-room'),
 	leftTheRoom: () => ipcRenderer.invoke('left-room'),
 	getServerEndpoint: () => ipcRenderer.invoke('get-serverendpoint'),
+	
+	getConfig: () => ipcRenderer.invoke('get-config'),
+	saveConfig: (vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass) => ipcRenderer.invoke('save-config', vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass),
 
 	onVLCstatus: (callback) => {
 		ipcRenderer.on('vlc-status', (_, data) => {
@@ -73,4 +76,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	gotoRoomJoin: () => ipcRenderer.send('goto-room_join'),
 	gotoIndex: () => ipcRenderer.send('goto-index'),
 	gotoLogin: () => ipcRenderer.send('goto-login'),
+	gotoConfig: () => ipcRenderer.send('goto-config'),
 })
