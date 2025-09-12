@@ -65,10 +65,22 @@
 						<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
 						watch video
 					</button>
+					<div class="flex flex-col sm:flex-row gap-2">
+						<input 
+							id="subtitle-file" 
+							type="file" 
+							accept=".vtt,.srt,.ass,.ssa,.sub" 
+							class="hidden"
+						/>
+						<button id="add-subtitle" class="flex-1 bg-gray-700 text-white font-medium py-2 px-4 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base flex items-center justify-center gap-2">
+							<i class="fas fa-closed-captioning"></i>
+							Add Subtitle
+						</button>
+					</div>
 				</div>
 			</div>
 		</section>		<!-- horizontal resizer -->
-		<div id="horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 hidden sm:block" style="height: 4px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
+		<div id="horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- video player section -->
 		<section id="video-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden" style="flex: 1; display: none;">
@@ -92,7 +104,10 @@
 	</div>
 
 	<!-- vertical resizer -->
-	<div id="vertical-resizer" class="resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200 hidden sm:block" style="width: 4px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
+	<div id="vertical-resizer" class="resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200" style="width: 6px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
+
+	<!-- horizontal resizer for mobile (above chat) -->
+	<div id="mobile-horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 sm:hidden" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- chat section -->
 		<section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden flex-1 min-h-0" style="flex: 1; display: flex;">
@@ -208,6 +223,7 @@
 	</button>
 
 	<script src="../assets/js/headers/header.js" defer></script>
+	<script src="../assets/js/config-modal.js" defer></script>
 	<script src="../assets/js/tenor.js" defer></script>
 	<script type="module" src="../assets/js/wss.js" defer></script>
 	<script src="../assets/js/index.js" defer></script>

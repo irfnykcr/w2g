@@ -34,6 +34,85 @@ const logger = {
 	}
 }
 
+const subtitleCache = new Map()
+
+const addSubtitleToVLC = async (subtitlePath, maxRetries = 3) => {
+	if (!isVLCwatching || !proc_vlc) {
+		logger.warn("VLC not running, cannot add subtitle")
+		return false
+	}
+	
+	let attempts = 0
+	while (attempts < maxRetries) {
+		try {
+			await axios.post(
+				`http://127.0.0.1:${VLC_PORT}/requests/status.xml`,
+				null,
+				{
+					auth: { username: '', password: VLC_HTTP_PASS },
+					params: { command: "addsubtitle", val: subtitlePath },
+					timeout: 2000
+				}
+			)
+			logger.info(`Subtitle added to VLC successfully on attempt ${attempts + 1}:`, subtitlePath)
+			
+			await new Promise(resolve => setTimeout(resolve, 200))
+			
+			try {
+				const statusResponse = await axios.post(
+					`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
+					null,
+					{
+						auth: { username: '', password: VLC_HTTP_PASS },
+						timeout: 2000
+					}
+				)
+				
+				if (statusResponse.data.information && statusResponse.data.information.category) {
+					const categories = statusResponse.data.information.category
+					let subtitleStreamId = null
+					
+					for (const [streamName, streamInfo] of Object.entries(categories)) {
+						if (streamInfo.Type === "Subtitle") {
+							const streamNumber = streamName.match(/Stream (\d+)/)?.[1]
+							if (streamNumber) {
+								subtitleStreamId = parseInt(streamNumber)
+								break
+							}
+						}
+					}
+					
+					if (subtitleStreamId !== null) {
+						await axios.post(
+							`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
+							null,
+							{
+								auth: { username: '', password: VLC_HTTP_PASS },
+								params: { command: "subtitle_track", val: subtitleStreamId },
+								timeout: 2000
+							}
+						)
+						logger.info("Enabled subtitle stream:", subtitleStreamId)
+					} else {
+						logger.info("No subtitle stream found")
+					}
+				}
+			} catch (enableError) {
+				logger.warn("Failed to enable subtitle:", enableError.message)
+			}
+			
+			return true
+		} catch (error) {
+			attempts++
+			logger.warn(`Failed to add subtitle to VLC (attempt ${attempts}/${maxRetries}):`, error.message)
+			if (attempts < maxRetries) {
+				await new Promise(resolve => setTimeout(resolve, 200))
+			}
+		}
+	}
+	logger.error(`Failed to add subtitle to VLC after ${maxRetries} attempts:`, subtitlePath)
+	return false
+}
 
 const isDev = !app.isPackaged
 const __apppath = isDev ? __dirname : process.resourcesPath
@@ -234,7 +313,9 @@ const createWindow = async () => {
 			// lazy load to avoid circular dependency
 			const { setupDebugCreds } = require('./debug_creds.js')
 			const debugConfig = await setupDebugCreds()
+			
 			USERID = debugConfig.userid
+			appConfig["VLC_PORT"] = debugConfig.vlc_port
 			VLC_PORT = debugConfig.vlc_port
 			logger.info(`Debug mode: Using user ${USERID} with VLC port ${VLC_PORT}`)
 		}
@@ -418,6 +499,17 @@ const handleVideoSyncMessage = async (message) => {
 	if (type === 'initial_state') {
 		logger.info("Received initial state from server")
 		isClientUpToDate = false
+		
+		if (mainWindow && mainWindow.webContents) {
+			mainWindow.webContents.send('subtitle-status', { 
+				subtitle_exist: message.subtitle_exist || false 
+			})
+			
+			if (!message.subtitle_exist) {
+				subtitleCache.clear()
+				logger.info("Cleared subtitle cache - no subtitles exist")
+			}
+		}
 	}
 	else if (type === 'connected') {
 		logger.info("Connected to video sync server")
@@ -426,6 +518,15 @@ const handleVideoSyncMessage = async (message) => {
 		logger.info("Server video URL updated:", message.url)
 		if (message.user !== USERID) {
 			isClientUpToDate = true
+			
+			subtitleCache.clear()
+			logger.info("Cleared subtitle cache - video URL changed")
+			
+			if (mainWindow && mainWindow.webContents) {
+				mainWindow.webContents.send('subtitle-status', { 
+					subtitle_exist: message.subtitle_exist || false 
+				})
+			}
 			
 			if (isInlineWatching) {
 				const processedUrl = await checkVideoUrl(message.url)
@@ -511,6 +612,45 @@ const handleVideoSyncMessage = async (message) => {
 			makeRequest_videoSync("imuptodate").catch(err => logger.warn("Failed to confirm sync:", err.message))
 		}
 	}
+	else if (type === 'subtitle_updated') {
+		logger.info("Server subtitle updated:", message.filename)
+		
+		try {
+			const subtitleBuffer = Buffer.from(message.subtitle_data, 'base64')
+			
+			subtitleCache.set(message.filename, subtitleBuffer)
+			
+			if (isVLCwatching) {
+				const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${message.filename}`)
+				fs.writeFileSync(tempPath, subtitleBuffer)
+				
+				const success = await addSubtitleToVLC(tempPath)
+				if (!success) {
+					logger.warn("Failed to add subtitle to VLC after retries")
+				}
+				
+				setTimeout(() => {
+					try { fs.unlinkSync(tempPath) } catch {}
+				}, 1000)
+			}
+			
+			if (mainWindow && mainWindow.webContents) {
+				mainWindow.webContents.send('subtitle-received', { 
+					filename: message.filename 
+				})
+				mainWindow.webContents.send('subtitle-status', { 
+					subtitle_exist: true 
+				})
+			}
+		} catch (error) {
+			logger.error("Failed to save/add subtitle:", error.message)
+		}
+		
+		if (message.user !== USERID) {
+			isClientUpToDate = true
+			makeRequest_videoSync("imuptodate").catch(err => logger.warn("Failed to confirm sync:", err.message))
+		}
+	}
 }
 
 ipcMain.on('goto-room_join', () => {
@@ -521,9 +661,6 @@ ipcMain.on('goto-index', () => {
 })
 ipcMain.on('goto-login', () => {
 	mainWindow.loadFile('views/login.html')
-})
-ipcMain.on('goto-config', () => {
-	mainWindow.loadFile('views/config.html')
 })
 
 const makeRequest_server = async (url, json) => {
@@ -714,10 +851,20 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 			throw new Error('Invalid URL provided')
 		}
 		logger.info("update_url", url)
+		
+		subtitleCache.clear()
+		logger.info("Cleared subtitle cache - new video set")
+		
 		const result = await makeRequest_videoSync("update_url", {"new_url": url})
 		
 		if (result.status) {
 			await setVideoVLC(url)
+			
+			if (mainWindow && mainWindow.webContents) {
+				mainWindow.webContents.send('subtitle-status', { 
+					subtitle_exist: false 
+				})
+			}
 		}
 		
 		return result.status
@@ -916,11 +1063,21 @@ const startVideoInline = async () => {
 }
 
 const setVideoInline = async (url) => {
+	subtitleCache.clear()
+	logger.info("Cleared subtitle cache - new inline video set")
+	
 	const result = await makeRequest_videoSync("update_url", {"new_url": url})
 	if (result.status) {
 		const processedUrl = await checkVideoUrl(url)
 		const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
 		mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+		
+		if (mainWindow && mainWindow.webContents) {
+			mainWindow.webContents.send('subtitle-status', { 
+				subtitle_exist: false 
+			})
+		}
+		
 		await makeRequest_videoSync("imuptodate")
 		isClientUpToDate = true
 	}
@@ -1228,6 +1385,28 @@ const startVLCMonitoring = async () => {
 		return false
 	}
 
+	await new Promise(resolve => setTimeout(resolve, 500))
+
+	for (const [filename, buffer] of subtitleCache.entries()) {
+		try {
+			const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${filename}`)
+			fs.writeFileSync(tempPath, buffer)
+			
+			const success = await addSubtitleToVLC(tempPath, 5)
+			if (success) {
+				logger.info("Restored subtitle to VLC:", filename)
+			} else {
+				logger.warn("Failed to restore subtitle to VLC:", filename)
+			}
+			
+			setTimeout(() => {
+				try { fs.unlinkSync(tempPath) } catch {}
+			}, 5000)
+		} catch (error) {
+			logger.warn("Failed to restore subtitle:", filename, error.message)
+		}
+	}
+
 	let initialIsPlaying = true
 	try {
 		const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
@@ -1449,6 +1628,72 @@ ipcMain.handle('stop-inline-video', async (event) => {
 
 ipcMain.handle('stop-vlc', async (event) => {
 	return await abortVLC()
+})
+
+ipcMain.handle('set-subtitle', async (event, fileData, fileName) => {
+	try {
+		const result = await makeRequest_videoSync("update_subtitle", {
+			"subtitle_data": Array.from(fileData),
+			"filename": fileName
+		})
+		return result.status
+	} catch (error) {
+		logger.error("Error setting subtitle:", error)
+		return false
+	}
+})
+
+ipcMain.handle('add-subtitle-vlc', async (event, filePath) => {
+	try {
+		const success = await addSubtitleToVLC(filePath)
+		return success
+	} catch (error) {
+		logger.error("Failed to add subtitle to VLC:", error.message)
+		return false
+	}
+})
+
+ipcMain.handle('upload-subtitle', async (event, arrayBuffer, filename) => {
+	try {
+		const subtitleBuffer = Buffer.from(arrayBuffer)
+		
+		subtitleCache.set(filename, subtitleBuffer)
+		
+		if (isVLCwatching) {
+			const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${filename}`)
+			fs.writeFileSync(tempPath, subtitleBuffer)
+			
+			const success = await addSubtitleToVLC(tempPath)
+			if (!success) {
+				logger.warn("Failed to add uploaded subtitle to VLC after retries")
+			}
+			
+			setTimeout(() => {
+				try { fs.unlinkSync(tempPath) } catch {}
+			}, 5000)
+		}
+		
+		const base64Data = subtitleBuffer.toString('base64')
+		await makeRequest_videoSync("update_subtitle", { 
+			filename: filename,
+			subtitle_data: base64Data
+		})
+		
+		return { success: true }
+	} catch (error) {
+		logger.error("Failed to upload subtitle:", error.message)
+		return { success: false, error: error.message }
+	}
+})
+
+ipcMain.handle('request-subtitles', async (event) => {
+	try {
+		const result = await makeRequest_videoSync("request_subtitle", {})
+		return { success: result.status, error: result.error }
+	} catch (error) {
+		logger.error("Failed to request subtitles:", error.message)
+		return { success: false, error: error.message }
+	}
 })
 
 app.whenReady().then(() => {

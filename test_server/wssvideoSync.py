@@ -3,14 +3,14 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from json import loads, dumps
 from json import JSONDecodeError
-from time import time
 from bcrypt import checkpw
 from mysql.connector import pooling
 from dotenv import load_dotenv
-from os import getenv
-import signal
-import sys
-import atexit
+from os import getenv, path, remove
+from signal import signal, SIGTERM, SIGINT
+from sys import exit
+from atexit import register
+from base64 import b64decode, b64encode
 load_dotenv()
 
 app = FastAPI()
@@ -32,6 +32,54 @@ connection_pool = pooling.MySQLConnectionPool(
 	password=getenv("MYSQL_PASSWORD"),
 	database=getenv("MYSQL_DATABASE")
 )
+HOME = getenv("DIR_SERVER")
+SUBTITLES_DIR = fr"{HOME}/subtitles"
+
+def save_subtitle(roomid, subtitle_data, filename):
+	try:
+		subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
+		decoded_data = b64decode(subtitle_data)
+		with open(subtitle_path, 'wb') as f:
+			f.write(decoded_data)
+		print(f"Saved subtitle for room {roomid}: {subtitle_path}")
+		return True
+	except:
+		print_exc()
+		print(f"Failed to save subtitle for room {roomid}")
+		return False
+
+def load_subtitle(roomid):
+	try:
+		subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
+		if path.exists(subtitle_path):
+			with open(subtitle_path, 'rb') as f:
+				data = f.read()
+			return b64encode(data).decode('utf-8')
+		return None
+	except:
+		print_exc()
+		print(f"Failed to load subtitle for room {roomid}")
+		return None
+
+def delete_subtitle(roomid):
+	subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
+	try:
+		if path.exists(subtitle_path):
+			print("subtitle deleted:", subtitle_path)
+			remove(subtitle_path)
+			return True
+		else:
+			print("path not found:", subtitle_path)
+			return False
+	except:
+		print_exc()
+		print("file:", subtitle_path)
+		return False
+
+def subtitle_exists(roomid):
+	subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
+	return path.exists(subtitle_path)
+
 
 PLAYER_STATUS = {}
 
@@ -55,8 +103,8 @@ def checkUser(user, psw):
 		if result and checkpw(psw.encode(), result[0].encode()):
 			return True
 		return False
-	except Exception as e:
-		print(f"Error checking user: {e}")
+	except:
+		print_exc()
 		return False
 	finally:
 		if cursor:
@@ -75,8 +123,8 @@ def checkRoom(roomid: str, roompsw: str):
 		if result and checkpw(roompsw.encode(), result[0].encode()):
 			return True
 		return False
-	except Exception as e:
-		print(f"Error checking room: {e}")
+	except:
+		print_exc()
 		return False
 	finally:
 		if cursor:
@@ -90,7 +138,8 @@ def get_player_status(roomid: str):
 			"is_playing": {"user": "", "value": False},
 			"url": {"user": "", "value": ""},
 			"uptodate": {},
-			"time": {"user": "", "value": 0}
+			"time": {"user": "", "value": 0},
+			"subtitle_exist": {"user": "", "value": False}
 		}
 	return PLAYER_STATUS[roomid]
 
@@ -101,11 +150,15 @@ def update_player_status(roomid: str, **kwargs):
 			"is_playing": {"user": "", "value": False},
 			"url": {"user": "", "value": ""},
 			"uptodate": {},
-			"time": {"user": "", "value": 0}
+			"time": {"user": "", "value": 0},
+			"subtitle_exist": {"user": "", "value": False}
 		}
 	
 	for field, value in kwargs.items():
-		if field in ['is_playing', 'url', 'uptodate', 'time']:
+		if field == "subtitle_exist":
+			if not value["value"]:
+				delete_subtitle(roomid)
+		if field in ['is_playing', 'url', 'uptodate', 'time', 'subtitle_exist']:
 			PLAYER_STATUS[roomid][field] = value
 	return True
 
@@ -147,17 +200,17 @@ def save_player_status_to_db():
 			is_playing = dumps(status.get("is_playing", {}))
 			url = dumps(status.get("url", {}))
 			time_data = dumps(status.get("time", {}))
+			subtitle_exist = dumps(status.get("subtitle_exist", {}))
 
 			cursor.execute("""
 				UPDATE player_status 
-				SET is_playing = %s, url = %s, time = %s
+				SET is_playing = %s, url = %s, time = %s, subtitle_exist = %s
 				WHERE roomid = %s
-			""", (is_playing, url, time_data, roomid))
+			""", (is_playing, url, time_data, subtitle_exist, roomid))
 		conn.commit()
 		print(f"Saved player status for {len(PLAYER_STATUS)} rooms to database")
 		
-	except Exception as e:
-		print(f"Error saving player status to database: {e}")
+	except:
 		print_exc()
 	finally:
 		if cursor:
@@ -174,21 +227,21 @@ def load_player_status_from_db():
 	cursor = None
 	try:
 		cursor = conn.cursor()
-		cursor.execute("SELECT roomid, is_playing, url, time FROM player_status")
+		cursor.execute("SELECT roomid, is_playing, url, time, subtitle_exist FROM player_status")
 		results = cursor.fetchall()
 		
-		for roomid, is_playing, url, time_data in results:
+		for roomid, is_playing, url, time_data, subtitle_exist in results:
 			PLAYER_STATUS[roomid] = {
 				"is_playing": loads(is_playing) if is_playing else {"user": "", "value": False},
 				"url": loads(url) if url else {"user": "", "value": ""},
 				"uptodate": {},
-				"time": loads(time_data) if time_data else {"user": "", "value": 0}
+				"time": loads(time_data) if time_data else {"user": "", "value": 0},
+				"subtitle_exist": {"user": "", "value": subtitle_exist}
 			}
 		
 		print(f"Loaded player status for {len(PLAYER_STATUS)} rooms from database")
 		
-	except Exception as e:
-		print(f"Error loading player status from database: {e}")
+	except:
 		print_exc()
 	finally:
 		if cursor:
@@ -199,13 +252,13 @@ def cleanup_and_save():
 	print("Video sync server shutting down, saving player status...")
 	save_player_status_to_db()
 
-atexit.register(cleanup_and_save)
+register(cleanup_and_save)
 def signal_handler(sig, frame):
 	print(f"Received signal {sig}")
 	cleanup_and_save()
-	sys.exit(0)
-signal.signal(signal.SIGTERM, signal_handler)
-signal.signal(signal.SIGINT, signal_handler)
+	exit(0)
+signal(SIGTERM, signal_handler)
+signal(SIGINT, signal_handler)
 
 @app.on_event("startup")
 async def startup_event():
@@ -242,8 +295,9 @@ class VideoSyncApp:
 					continue
 				try:
 					await user_data["websocket"].send_text(dumps(message))
-				except Exception as e:
-					print(f"Error sending to {user_data['user']}: {e}")
+				except:
+					print_exc()
+					print(f"Error sending to {user_data['user']}")
 
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str):
 		if roomid not in self.active_connections:
@@ -258,7 +312,9 @@ class VideoSyncApp:
 		uptodate = player_status.get("uptodate", {})
 		
 		uptodate[user] = False
-		update_player_status(roomid, uptodate=uptodate)
+		
+		has_subtitle = subtitle_exists(roomid)
+		update_player_status(roomid, uptodate=uptodate, subtitle_exist={"user": "", "value": has_subtitle})
 		
 		await websocket.send_text(dumps({
 			"type": "initial_state",
@@ -267,8 +323,19 @@ class VideoSyncApp:
 			"is_playing": player_status.get("is_playing", {}).get("value", False),
 			"url_user": player_status.get("url", {}).get("user", ""),
 			"time_user": player_status.get("time", {}).get("user", ""),
-			"playing_user": player_status.get("is_playing", {}).get("user", "")
+			"playing_user": player_status.get("is_playing", {}).get("user", ""),
+			"subtitle_exist": has_subtitle
 		}))
+		
+		if has_subtitle:
+			subtitle_data = load_subtitle(roomid)
+			if subtitle_data:
+				await websocket.send_text(dumps({
+					"type": "subtitle_updated",
+					"user": "server",
+					"filename": f"{roomid}.vtt",
+					"subtitle_data": subtitle_data
+				}))
 
 	async def handle_disconnect(self, websocket: WebSocket):
 		roomid = self.get_room_from_websocket(websocket)
@@ -316,8 +383,9 @@ class VideoSyncApp:
 				time_data = {"user": user, "value": 0}
 				is_playing_data = {"user": user, "value": True}
 				url_data = {"user": user, "value": new_url}
+				subtitle_exist_data = {"user": "", "value": False}
 				
-				update_player_status(roomid, time=time_data, is_playing=is_playing_data, url=url_data)
+				update_player_status(roomid, time=time_data, is_playing=is_playing_data, url=url_data, subtitle_exist=subtitle_exist_data)
 				change_updatestatus_forall(roomid, user)
 				
 				if request_id:
@@ -332,7 +400,8 @@ class VideoSyncApp:
 					"url": new_url,
 					"user": user,
 					"time": 0,
-					"is_playing": True
+					"is_playing": True,
+					"subtitle_exist": False
 				}, exclude_user=user)
 			else:
 				if request_id:
@@ -403,6 +472,65 @@ class VideoSyncApp:
 						"requestId": request_id
 					}))
 				
+		elif message_type == "update_subtitle":
+			subtitle_data = data.get("subtitle_data")
+			filename = data.get("filename", "subtitle.vtt")
+			
+			if check_ifcan_update(roomid, user):
+				if save_subtitle(roomid, subtitle_data, filename):
+					update_player_status(roomid, subtitle_exist={"user": user, "value": True})
+					change_updatestatus_forall(roomid, user)
+					
+					await self.broadcast_to_room(roomid, {
+						"type": "subtitle_updated",
+						"user": user,
+						"filename": filename,
+						"subtitle_data": subtitle_data
+					}, exclude_user=user)
+					
+					if request_id:
+						await websocket.send_text(dumps({
+							"type": "update_response",
+							"success": True,
+							"requestId": request_id
+						}))
+				else:
+					if request_id:
+						await websocket.send_text(dumps({
+							"type": "update_response",
+							"success": False,
+							"error": "Failed to save subtitle",
+							"requestId": request_id
+						}))
+			else:
+				if request_id:
+					await websocket.send_text(dumps({
+						"type": "update_response",
+						"success": False,
+						"error": "user not authorized to update",
+						"requestId": request_id
+					}))
+				
+		elif message_type == "request_subtitle":
+			has_subtitle = subtitle_exists(roomid)
+			
+			if has_subtitle:
+				subtitle_data = load_subtitle(roomid)
+				if subtitle_data:
+					await websocket.send_text(dumps({
+						"type": "subtitle_updated",
+						"user": "server",
+						"filename": f"{roomid}.vtt",
+						"subtitle_data": subtitle_data
+					}))
+			
+			if request_id:
+				await websocket.send_text(dumps({
+					"type": "update_response", 
+					"success": True,
+					"requestId": request_id
+				}))
+				
 		elif message_type == "imuptodate":
 			player_status = get_player_status(roomid)
 			uptodate = player_status.get("uptodate", {})
@@ -455,18 +583,18 @@ async def websocket_endpoint(
 						"type": "error",
 						"message": "Invalid message format"
 					}))
-				except Exception as e:
-					print(f"Error handling message: {e}")
+				except:
+					print_exc()
 			except WebSocketDisconnect:
 				break
-			except Exception as e:
-				print(f"Error receiving message: {e}")
+			except:
+				print_exc()
 				break
 		await video_sync.handle_disconnect(websocket)
 	except WebSocketDisconnect:
 		await video_sync.handle_disconnect(websocket)
-	except Exception as e:
-		print(f"WebSocket error: {e}")
+	except:
+		print_exc()
 		await video_sync.handle_disconnect(websocket)
 
 

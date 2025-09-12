@@ -50,8 +50,8 @@ def checkUser(user, psw):
 		if result and checkpw(psw.encode(), result[0].encode()):
 			return True
 		return False
-	except Exception as e:
-		print(f"Error checking user: {e}")
+	except:
+		print_exc()
 		return False
 	finally:
 		if cursor:
@@ -71,8 +71,8 @@ def checkRoom(roomid: str, roompsw: str):
 		if result and checkpw(roompsw.encode(), result[0].encode()):
 			return result[1]
 		return False
-	except Exception as e:
-		print(f"Error checking room: {e}")
+	except:
+		print_exc()
 		return False
 	finally:
 		if cursor:
@@ -127,8 +127,8 @@ class ChatApp:
 					result = cursor.fetchone()
 					if result and result[0]:
 						user_imageurl = result[0]
-				except Exception as e:
-					print(f"Error fetching user imageurl: {e}")
+				except:
+					print_exc()
 				finally:
 					if cursor:
 						cursor.close()
@@ -163,8 +163,9 @@ class ChatApp:
 				try:
 					if websocket.client_state.value == 1:  # CONNECTED state
 						await websocket.send_text(dumps(data))
-				except Exception as e:
-					print(f"Error sending watchers update to {user_data['username']}: {e}")
+				except:
+					print_exc()
+					print(f"Error sending watchers update to {user_data['username']}")
 
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
@@ -294,8 +295,9 @@ class ChatApp:
 							try:
 								if websocket_user.client_state.value == 1:  # CONNECTED state
 									await websocket_user.send_text(dumps(data))
-							except Exception as e:
-								print(f"Error sending reaction removal to {user_data['username']}: {e}")
+							except:
+								print_exc()
+								print(f"Error sending reaction removal to {user_data['username']}")
 					return
 				else:
 					cursor.execute(
@@ -327,10 +329,11 @@ class ChatApp:
 					try:
 						if websocket_user.client_state.value == 1:  # CONNECTED state
 							await websocket_user.send_text(dumps(data))
-					except Exception as e:
-						print(f"Error sending reaction to {user_data['username']}: {e}")
-		except Exception as e:
-			print(f"Error handling reaction: {e}")
+					except:
+						print_exc()
+						print(f"Error sending reaction to {user_data['username']}")
+		except:
+			print_exc()
 		finally:
 			if cursor:
 				cursor.close()
@@ -394,10 +397,11 @@ class ChatApp:
 					try:
 						if websocket_user.client_state.value == 1:  # CONNECTED state
 							await websocket_user.send_text(dumps(data))
-					except Exception as e:
-						print(f"Error sending message deletion to {user_data['username']}: {e}")
-		except Exception as e:
-			print(f"Error handling message deletion: {e}")
+					except:
+						print_exc()
+						print(f"Error sending message deletion to {user_data['username']}")
+		except:
+			print_exc()
 		finally:
 			if cursor:
 				cursor.close()
@@ -529,8 +533,8 @@ class ChatApp:
 				if cursor:
 					cursor.close()
 				conn.close()
-		except Exception as e:
-			print(f"Error sending history: {e}")
+		except:
+			print_exc()
 
 	async def send_message_to_websocket(self, websocket: WebSocket, message: str, sender: str = "system"):
 		data = {
@@ -542,8 +546,8 @@ class ChatApp:
 		try:
 			if websocket.client_state.value == 1:  # CONNECTED state
 				await websocket.send_text(dumps(data))
-		except Exception as e:
-			print(f"Error sending message: {e}")
+		except:
+			print_exc()
 
 	async def send_message_to_room(self, roomid: str, message: str, sender: str = "system", no_history: bool = False, reply_to_id = None):
 		if roomid in self.active_rooms:
@@ -576,8 +580,8 @@ class ChatApp:
 									"message": reply_result[1],
 									"is_deleted": False
 								}
-					except Exception as e:
-						print(f"Error fetching reply message: {e}")
+					except:
+						print_exc()
 					finally:
 						if cursor:
 							cursor.close()
@@ -595,8 +599,8 @@ class ChatApp:
 						)
 						conn.commit()
 						message_id = cursor.lastrowid # id of inserted
-					except Exception as e:
-						print(f"Error saving message to database: {e}")
+					except:
+						print_exc()
 					finally:
 						if cursor:
 							cursor.close()
@@ -616,8 +620,9 @@ class ChatApp:
 				try:
 					if websocket.client_state.value == 1:  # CONNECTED state
 						await websocket.send_text(dumps(data))
-				except Exception as e:
-					print(f"Error sending message to {user_data['username']}: {e}")
+				except:
+					print_exc()
+					print(f"Error sending message to {user_data['username']}")
 			# maybe disconnect unavailable users?
 					
 
@@ -659,8 +664,8 @@ async def websocket_endpoint(
 			"room_name": room_name,
 			"message": f"Connected to room: {room_name}"
 		}))
-	except Exception as e:
-		print(f"Error sending room info: {e}")
+	except:
+		print_exc()
 
 	try:
 		await chat.handle_connect(websocket, user, roomid, lastMessageDate)
@@ -674,17 +679,17 @@ async def websocket_endpoint(
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					await chat.send_message_to_websocket(websocket, "Invalid message format")
-				except Exception as e:
-					print(f"Error handling message: {e}")
+				except:
+					print_exc()
 			except WebSocketDisconnect:
 				break
-			except Exception as e:
-				print(f"Error receiving message: {e}")
+			except:
+				print_exc()
 				break
 		await chat.handle_disconnect(websocket)
 
 	except WebSocketDisconnect:
 		await chat.handle_disconnect(websocket)
-	except Exception as e:
-		print(f"WebSocket error: {e}")
+	except:
+		print_exc()
 		await chat.handle_disconnect(websocket)

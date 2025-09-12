@@ -110,7 +110,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 	const configEl = document.querySelector("#config")
 	configEl.addEventListener("click", async ()=>{
-		await window.electronAPI.gotoConfig()
+		if (window.showConfigModal) {
+			window.showConfigModal()
+		}
 	})
 
 	const headerLogoEl = document.querySelector("#header-logo")

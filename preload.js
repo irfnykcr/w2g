@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	
 	getConfig: () => ipcRenderer.invoke('get-config'),
 	saveConfig: (vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass) => ipcRenderer.invoke('save-config', vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass),
+	
+	setSubtitle: (fileData, fileName) => ipcRenderer.invoke('set-subtitle', fileData, fileName),
+	addSubtitleVLC: (filePath) => ipcRenderer.invoke('add-subtitle-vlc', filePath),
+	uploadSubtitle: (arrayBuffer, filename) => ipcRenderer.invoke('upload-subtitle', arrayBuffer, filename),
+	requestSubtitles: () => ipcRenderer.invoke('request-subtitles'),
 
 	onVLCstatus: (callback) => {
 		ipcRenderer.on('vlc-status', (_, data) => {
@@ -61,6 +66,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	},
 	sendInlineVideoStatusSync: (data) => ipcRenderer.invoke('inline-video-status-response-sync', data),
 	
+	onSubtitleReceived: (callback) => {
+		ipcRenderer.on('subtitle-received', (_, data) => {
+			callback(data)
+		})
+	},
+	
+	onSubtitleStatus: (callback) => {
+		ipcRenderer.on('subtitle-status', (_, data) => {
+			callback(data)
+		})
+	},
+	
 	onVideoSyncStatus: (callback) => {
 		ipcRenderer.on('video-sync-status', (_, data) => {
 			callback(data)
@@ -76,5 +93,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	gotoRoomJoin: () => ipcRenderer.send('goto-room_join'),
 	gotoIndex: () => ipcRenderer.send('goto-index'),
 	gotoLogin: () => ipcRenderer.send('goto-login'),
-	gotoConfig: () => ipcRenderer.send('goto-config'),
 })

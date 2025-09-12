@@ -27,13 +27,33 @@ window.electronAPI.onVideoSyncStatus((data) => {
 			toggleButton.classList.add("bg-gray-600")
 		}
 	}
+	
+	updateButtonVisibility(data.connected)
 })
+
+function updateButtonVisibility(isWatching) {
+	const setVideoContainer = document.querySelector("#set-thevideo")?.parentElement
+	const addSubtitleContainer = document.querySelector("#add-subtitle")?.parentElement
+	const watchVideoButton = document.getElementById("play-thevideo")
+	
+	if (isWatching) {
+		if (setVideoContainer) setVideoContainer.style.display = "flex"
+		if (addSubtitleContainer) addSubtitleContainer.style.display = "flex"
+		if (watchVideoButton) watchVideoButton.style.display = "none"
+	} else {
+		if (setVideoContainer) setVideoContainer.style.display = "none"
+		if (addSubtitleContainer) addSubtitleContainer.style.display = "none"
+		if (watchVideoButton) watchVideoButton.style.display = "block"
+	}
+}
 
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
 	const playthevideo = document.querySelector("#play-thevideo")
 	const videoPlayer = document.querySelector("#video-player")
+
+	updateButtonVisibility(false)
 
 	playthevideo.addEventListener("click", async () => {
 		try {
@@ -62,6 +82,46 @@ document.addEventListener("DOMContentLoaded", () => {
 		}
 	})
 
+	const addSubtitleButton = document.querySelector("#add-subtitle")
+	const subtitleFileInput = document.querySelector("#subtitle-file")
+
+	addSubtitleButton.addEventListener("click", () => {
+		subtitleFileInput.click()
+	})
+
+	subtitleFileInput.addEventListener("change", async (e) => {
+		const file = e.target.files[0]
+		if (!file){
+			loggerIndex.warn("file not found.")
+			return
+		}
+
+		try {
+			const arrayBuffer = await file.arrayBuffer()
+			
+			const result = await window.electronAPI.uploadSubtitle(arrayBuffer, file.name)
+			
+			if (result.success) {
+				addAvailableSubtitle(file.name)
+				
+				addSubtitleButton.innerHTML = '<i class="fas fa-check"></i> Subtitle Added'
+				addSubtitleButton.classList.remove('bg-gray-700', 'hover:bg-gray-600')
+				addSubtitleButton.classList.add('bg-green-600', 'hover:bg-green-500')
+				
+				setTimeout(() => {
+					addSubtitleButton.innerHTML = '<i class="fas fa-check"></i> Subtitle Available'
+					addSubtitleButton.classList.remove('bg-green-600', 'hover:bg-green-500')
+					addSubtitleButton.classList.add('bg-blue-600', 'hover:bg-blue-500')
+					subtitleFileInput.value = ""
+				}, 2000)
+			} else {
+				throw new Error(result.error || 'Failed to upload subtitle')
+			}
+		} catch (error) {
+			loggerIndex.error("Error uploading subtitle:", error)
+		}
+	})
+
 	const main = document.querySelector("main")
 	const leftPanel = document.getElementById("left-panel")
 	const urlSection = document.getElementById("url-section")
@@ -76,6 +136,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	const expandChatButton = document.getElementById("expand-chat")
 	const horizontalResizer = document.getElementById("horizontal-resizer")
 	const verticalResizer = document.getElementById("vertical-resizer")
+	const mobileHorizontalResizer = document.getElementById("mobile-horizontal-resizer")
 	const toggleWatchersButton = document.getElementById("toggle-watchers")
 	const watchersSection = document.getElementById("watchers-section")
 	const closeWatchersSectionButton = document.getElementById("close-watchers-section")
@@ -146,6 +207,29 @@ document.addEventListener("DOMContentLoaded", () => {
 		
 		window.electronAPI.onInlineVideoSet((data) => {
 			if (!videoPlayer) return
+			
+			videoPlayer.addEventListener('error', (e) => {
+				loggerIndex.error("Video load error:", e.target.error, "URL:", data.url)
+				videoPlayer.style.display = "none"
+				
+				let errorDiv = document.getElementById('video-error-message')
+				if (!errorDiv) {
+					errorDiv = document.createElement('div')
+					errorDiv.id = 'video-error-message'
+					errorDiv.style.cssText = 'padding: 20px; text-align: center; color: #ff6b6b; background: rgba(255,107,107,0.1); border-radius: 8px; margin: 10px;'
+					videoPlayer.parentNode.insertBefore(errorDiv, videoPlayer.nextSibling)
+				}
+				errorDiv.innerHTML = `<strong>Video Load Error</strong><br>This URL is not compatible with inline video mode.<br>Try using VLC mode instead.`
+				errorDiv.style.display = "block"
+			}, { once: true })
+			
+			videoPlayer.addEventListener('loadeddata', () => {
+				loggerIndex.info("Video loaded successfully:", data.url)
+				videoPlayer.style.display = "block"
+				const errorDiv = document.getElementById('video-error-message')
+				if (errorDiv) errorDiv.style.display = "none"
+			}, { once: true })
+			
 			videoPlayer.src = data.url
 			videoPlayer.currentTime = 0
 		})
@@ -192,31 +276,83 @@ document.addEventListener("DOMContentLoaded", () => {
 				currentVideo
 			})
 		})
+
+		window.electronAPI.onSubtitleReceived((data) => {
+			addAvailableSubtitle(data.filename)
+		})
+
+		window.electronAPI.onSubtitleStatus((data) => {
+			const addSubtitleButton = document.querySelector("#add-subtitle")
+			if (addSubtitleButton) {
+				if (data.subtitle_exist) {
+					addSubtitleButton.innerHTML = '<i class="fas fa-check"></i> Subtitle Available'
+					addSubtitleButton.classList.remove('bg-gray-700', 'hover:bg-gray-600')
+					addSubtitleButton.classList.add('bg-blue-600', 'hover:bg-blue-500')
+				} else {
+					addSubtitleButton.innerHTML = '<i class="fas fa-closed-captioning"></i> Add Subtitle'
+					addSubtitleButton.classList.remove('bg-blue-600', 'hover:bg-blue-500', 'bg-green-600', 'hover:bg-green-500')
+					addSubtitleButton.classList.add('bg-gray-700', 'hover:bg-gray-600')
+				}
+			}
+		})
+	}
+
+	let currentUser = null
+	let availableSubtitles = []
+
+	window.electronAPI.getUser().then(user => {
+		currentUser = user
+	}).catch(() => {
+		currentUser = null
+	})
+
+	function getCurrentSubtitle() {
+		return availableSubtitles.length > 0 ? availableSubtitles[0] : null
+	}
+
+	function addAvailableSubtitle(filename) {
+		if (!availableSubtitles.find(s => s.filename === filename)) {
+			availableSubtitles.push({ filename })
+		}
 	}
 
 	setupInlineVideoSync()
 
 	function startResize(e, type) {
 		e.preventDefault()
+		if (e.touches && e.touches.length > 1) return
 		isResizing = true
 		resizeType = type
-		document.body.style.cursor = type === "horizontal" ? "row-resize" : "col-resize"
+		document.body.style.cursor = (type === "horizontal" || type === "mobile-horizontal") ? "row-resize" : "col-resize"
 		document.body.style.userSelect = "none"
+		document.body.style.touchAction = "none"
 	}
 
 	function doResize(e) {
-		if (!isResizing || !leftPanel) return
+		if (!isResizing || !main) return
+		
+		e.preventDefault()
+		
+		const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0)
+		const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0)
 		
 		if (resizeType === "horizontal") {
 			const rect = leftPanel.getBoundingClientRect()
-			const y = e.clientY - rect.top
+			const y = clientY - rect.top
 			const percent = (y / rect.height) * 100
 			
 			if (urlSection) urlSection.style.flex = percent
 			if (videoSection) videoSection.style.flex = (100 - percent)
+		} else if (resizeType === "mobile-horizontal") {
+			const rect = main.getBoundingClientRect()
+			const y = clientY - rect.top
+			const percent = (y / rect.height) * 100
+			
+			if (leftPanel) leftPanel.style.flex = percent
+			if (chatSection) chatSection.style.flex = (100 - percent)
 		} else {
 			const rect = main.getBoundingClientRect()
-			const x = e.clientX - rect.left
+			const x = clientX - rect.left
 			const percent = (x / rect.width) * 100
 			
 			if (leftPanel) leftPanel.style.flex = percent
@@ -229,12 +365,25 @@ document.addEventListener("DOMContentLoaded", () => {
 		resizeType = null
 		document.body.style.cursor = ""
 		document.body.style.userSelect = ""
+		document.body.style.touchAction = ""
 	}
 
-	if (horizontalResizer) horizontalResizer.onmousedown = (e) => startResize(e, "horizontal")
-	if (verticalResizer) verticalResizer.onmousedown = (e) => startResize(e, "vertical")
+	if (horizontalResizer) {
+		horizontalResizer.onmousedown = (e) => startResize(e, "horizontal")
+		horizontalResizer.ontouchstart = (e) => startResize(e, "horizontal")
+	}
+	if (verticalResizer) {
+		verticalResizer.onmousedown = (e) => startResize(e, "vertical")
+		verticalResizer.ontouchstart = (e) => startResize(e, "vertical")
+	}
+	if (mobileHorizontalResizer) {
+		mobileHorizontalResizer.onmousedown = (e) => startResize(e, "mobile-horizontal")
+		mobileHorizontalResizer.ontouchstart = (e) => startResize(e, "mobile-horizontal")
+	}
 	document.onmousemove = doResize
 	document.onmouseup = stopResize
+	document.ontouchmove = doResize
+	document.ontouchend = stopResize
 
 	function updateLayout() {
 		const hasCollapsed = !isUrlExpanded || !isVideoExpanded || !isChatExpanded
@@ -279,10 +428,13 @@ document.addEventListener("DOMContentLoaded", () => {
 		}
 
 		if (horizontalResizer) {
-			horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode && !isMobile()) ? "block" : "none"
+			horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode) ? "block" : "none"
 		}
 		if (verticalResizer) {
-			verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded && !isMobile()) ? "block" : "none"
+			verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded) ? "block" : "none"
+		}
+		if (mobileHorizontalResizer) {
+			mobileHorizontalResizer.style.display = (isMobile() && ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded)) ? "block" : "none"
 		}
 	}
 
