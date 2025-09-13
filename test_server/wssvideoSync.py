@@ -8,10 +8,18 @@ from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv, path, remove
 from signal import signal, SIGTERM, SIGINT
-from sys import exit
+import sys
 from atexit import register
 from base64 import b64decode, b64encode
+import logging
 load_dotenv()
+
+logging.basicConfig(
+	level=logging.INFO,
+	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger("wssVideoSync")
 
 app = FastAPI()
 
@@ -41,11 +49,11 @@ def save_subtitle(roomid, subtitle_data, filename):
 		decoded_data = b64decode(subtitle_data)
 		with open(subtitle_path, 'wb') as f:
 			f.write(decoded_data)
-		print(f"Saved subtitle for room {roomid}: {subtitle_path}")
+		logger.info(f"Saved subtitle for room {roomid}: {subtitle_path}")
 		return True
 	except:
 		print_exc()
-		print(f"Failed to save subtitle for room {roomid}")
+		logger.error(f"Failed to save subtitle for room {roomid}")
 		return False
 
 def load_subtitle(roomid):
@@ -58,22 +66,22 @@ def load_subtitle(roomid):
 		return None
 	except:
 		print_exc()
-		print(f"Failed to load subtitle for room {roomid}")
+		logger.error(f"Failed to load subtitle for room {roomid}")
 		return None
 
 def delete_subtitle(roomid):
 	subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
 	try:
 		if path.exists(subtitle_path):
-			print("subtitle deleted:", subtitle_path)
+			logger.info("subtitle deleted:", subtitle_path)
 			remove(subtitle_path)
 			return True
 		else:
-			print("path not found:", subtitle_path)
+			logger.error("path not found:", subtitle_path)
 			return False
 	except:
 		print_exc()
-		print("file:", subtitle_path)
+		logger.info("file:", subtitle_path)
 		return False
 
 def subtitle_exists(roomid):
@@ -88,7 +96,7 @@ def get_db_connection():
 		return connection_pool.get_connection()
 	except:
 		print_exc()
-		print(f"Error getting connection from pool")
+		logger.error(f"Error getting connection from pool")
 		return None
 
 def checkUser(user, psw):
@@ -189,7 +197,7 @@ def save_player_status_to_db():
 	global PLAYER_STATUS
 	conn = get_db_connection()
 	if not conn:
-		print("Failed to save player status to database")
+		logger.error("Failed to save player status to database")
 		return
 	
 	cursor = None
@@ -208,7 +216,7 @@ def save_player_status_to_db():
 				WHERE roomid = %s
 			""", (is_playing, url, time_data, subtitle_exist, roomid))
 		conn.commit()
-		print(f"Saved player status for {len(PLAYER_STATUS)} rooms to database")
+		logger.info(f"Saved player status for {len(PLAYER_STATUS)} rooms to database")
 		
 	except:
 		print_exc()
@@ -221,7 +229,7 @@ def load_player_status_from_db():
 	global PLAYER_STATUS
 	conn = get_db_connection()
 	if not conn:
-		print("Failed to load player status from database")
+		logger.info("Failed to load player status from database")
 		return
 	
 	cursor = None
@@ -239,7 +247,7 @@ def load_player_status_from_db():
 				"subtitle_exist": {"user": "", "value": subtitle_exist}
 			}
 		
-		print(f"Loaded player status for {len(PLAYER_STATUS)} rooms from database")
+		logger.info(f"Loaded player status for {len(PLAYER_STATUS)} rooms from database")
 		
 	except:
 		print_exc()
@@ -249,25 +257,25 @@ def load_player_status_from_db():
 		conn.close()
 
 def cleanup_and_save():
-	print("Video sync server shutting down, saving player status...")
+	logger.info("Video sync server shutting down, saving player status...")
 	save_player_status_to_db()
 
 register(cleanup_and_save)
 def signal_handler(sig, frame):
-	print(f"Received signal {sig}")
+	logger.info(f"Received signal {sig}")
 	cleanup_and_save()
-	exit(0)
+	sys.exit(0)
 signal(SIGTERM, signal_handler)
 signal(SIGINT, signal_handler)
 
 @app.on_event("startup")
 async def startup_event():
-	print("Video sync server starting up, loading player status from database...")
+	logger.info("Video sync server starting up, loading player status from database...")
 	load_player_status_from_db()
 
 @app.on_event("shutdown")
 async def shutdown_event():
-	print("Video sync server shutting down, saving player status to database...")
+	logger.info("Video sync server shutting down, saving player status to database...")
 	save_player_status_to_db()
 
 class VideoSyncApp:
@@ -297,7 +305,7 @@ class VideoSyncApp:
 					await user_data["websocket"].send_text(dumps(message))
 				except:
 					print_exc()
-					print(f"Error sending to {user_data['user']}")
+					logger.error(f"broadcast_to_room: Error sending to {user_data['user']}")
 
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str):
 		if roomid not in self.active_connections:
@@ -366,7 +374,7 @@ class VideoSyncApp:
 			return
 			
 		message_type = data.get("type")
-		print("got type:", message_type)
+		logger.debug(f"handle_message: type`{message_type}` user`{user}` roomid`{roomid}`")
 		request_id = data.get("requestId")
 		
 		if message_type == "get_playerstatus":
@@ -556,18 +564,22 @@ async def websocket_endpoint(
 	roompsw: str = Query(...),
 ):
 	if not (user and psw and roomid and roompsw):
+		logger.error("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
 		return
 
 	if not checkUser(user, psw):
+		logger.error("Invalid user credentials")
 		await websocket.close(code=1008, reason="Invalid user credentials")
 		return
 
 	if not checkRoom(roomid, roompsw):
+		logger.error("Invalid room credentials")
 		await websocket.close(code=1008, reason="Invalid room credentials")
 		return
 
 	await websocket.accept()
+	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")
 	
 	try:
 		await video_sync.handle_connect(websocket, user, roomid)
@@ -603,10 +615,12 @@ async def login_user(request: Request):
 	data = await request.json()
 	user = str(data["user"])
 	psw = str(data["psw"])
+	logger.info(f"login_user: user`{user}`")
 	return {"status": checkUser(user, psw)}
 @app.post('/login_room')
 async def login_room(request: Request):
 	data = await request.json()
 	room = str(data["room"])
 	psw = str(data["psw"])
+	logger.info(f"login_room: room`{room}`")
 	return {"status": checkRoom(room, psw)}

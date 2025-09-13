@@ -1,3 +1,4 @@
+import logging
 from traceback import print_exc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,13 @@ from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv
 load_dotenv()
+
+logging.basicConfig(
+	level=logging.INFO,
+	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger("wssChat")
 
 app = FastAPI()
 
@@ -35,7 +43,7 @@ def get_db_connection():
 		return connection_pool.get_connection()
 	except:
 		print_exc()
-		print(f"Error getting connection from pool")
+		logger.error(f"Error getting connection from pool")
 		return None
 
 def checkUser(user, psw):
@@ -165,7 +173,7 @@ class ChatApp:
 						await websocket.send_text(dumps(data))
 				except:
 					print_exc()
-					print(f"Error sending watchers update to {user_data['username']}")
+					logger.error(f"Error sending watchers update to {user_data['username']}")
 
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
@@ -181,15 +189,16 @@ class ChatApp:
 	async def handle_disconnect(self, websocket: WebSocket):
 		roomid = self.get_room_from_websocket(websocket)
 		user = self.get_user_from_websocket(websocket)
+		if not user:
+			logger.error(f"handle_disconnect: cant find user. roomid`{roomid}`")
 
 		if roomid is None or roomid not in self.active_rooms:
-			print("room is not active.")
+			logger.error(f"handle_disconnect: room is not active. user`{user}`")
 			return
 			
-		if user:
-			await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
-			if roomid in self.room_watchers:
-				self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
+		await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
+		if roomid in self.room_watchers:
+			self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
 
 		self.active_rooms[roomid] = [user_data for user_data in self.active_rooms[roomid] if user_data["websocket"] != websocket]
 		
@@ -216,9 +225,9 @@ class ChatApp:
 			
 		message = data.get("message")
 		reply_to = data.get("reply_to")
-		print(data, reply_to)
 		user = self.get_user_from_websocket(websocket)
 		roomid = self.get_room_from_websocket(websocket)
+		logger.info(f"handle_message: user`{user}` roomid`{roomid}` data`{data}`, reply_to`{reply_to}`")
 
 		if not roomid:
 			await self.send_message_to_websocket(websocket, "You are not in a room.")
@@ -297,7 +306,7 @@ class ChatApp:
 									await websocket_user.send_text(dumps(data))
 							except:
 								print_exc()
-								print(f"Error sending reaction removal to {user_data['username']}")
+								logger.error(f"Error sending reaction removal to {user_data['username']}")
 					return
 				else:
 					cursor.execute(
@@ -331,7 +340,7 @@ class ChatApp:
 							await websocket_user.send_text(dumps(data))
 					except:
 						print_exc()
-						print(f"Error sending reaction to {user_data['username']}")
+						logger.error(f"Error sending reaction to {user_data['username']}")
 		except:
 			print_exc()
 		finally:
@@ -399,7 +408,7 @@ class ChatApp:
 							await websocket_user.send_text(dumps(data))
 					except:
 						print_exc()
-						print(f"Error sending message deletion to {user_data['username']}")
+						logger.error(f"Error sending message deletion to {user_data['username']}")
 		except:
 			print_exc()
 		finally:
@@ -411,10 +420,10 @@ class ChatApp:
 		try:
 			conn = get_db_connection()
 			if not conn:
-				print("Failed to get database connection")
+				logger.error("send_history_to_websocket: Failed to get database connection")
 				return
 			if limit > 15 or limit < 1:
-				print("limit error:", limit)
+				logger.error("send_history_to_websocket: limit error:", limit)
 				return
 			cursor = None
 			try:
@@ -622,7 +631,7 @@ class ChatApp:
 						await websocket.send_text(dumps(data))
 				except:
 					print_exc()
-					print(f"Error sending message to {user_data['username']}")
+					logger.error(f"send_message_to_room: Error sending message to {user_data['username']}")
 			# maybe disconnect unavailable users?
 					
 
@@ -639,24 +648,25 @@ async def websocket_endpoint(
 	roompsw: str = Query(...),
 	lastMessageDate: float = Query(0),
 ):
-	print("connection")
 	if not (user and psw and roomid and roompsw):
-		print("Missing required parameters")
+		logger.error("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
 		return
 
 	if not checkUser(user, psw):
-		print("Invalid user credentials")
+		logger.error("Invalid user credentials")
 		await websocket.close(code=1008, reason="Invalid user credentials")
 		return
 
 	room_name = checkRoom(roomid, roompsw)
 	if not room_name:
-		print("Invalid room credentials")
+		logger.error("Invalid room credentials")
 		await websocket.close(code=1008, reason="Invalid room credentials")
 		return
+	
 
 	await websocket.accept()
+	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")
 	
 	try:
 		await websocket.send_text(dumps({
