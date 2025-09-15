@@ -27,7 +27,7 @@ let replyState = {
 
 let messagesById = new Map()
 let messageReactions = new Map()
-let ws
+let wss
 let USER 
 let hasMoreMessages = true
 let isLoadingMessages = false
@@ -37,6 +37,26 @@ let oldestMessageId = null
 let isWindowFocused = true
 let hasUnreadMessages = false
 let notificationSound = null
+let messageHandlers = new Map()
+
+
+// heartbeat
+let heartbeatInterval = null
+let lastPong = Date.now()
+
+function sendSafe(data) {
+	if (!wss || wss.readyState !== WebSocket.OPEN) {
+		loggerWss.warn('sendSafe: websocket not open')
+		return false
+	}
+	try {
+		wss.send(JSON.stringify(data))
+		return true
+	} catch (err) {
+		loggerWss.error('sendSafe: failed to send', err)
+		return false
+	}
+}
 
 window.addEventListener('focus', () => {
 	const wasUnfocused = !isWindowFocused
@@ -167,14 +187,21 @@ function scrollToMessage(messageId) {
 }
 
 function sendReaction(messageId, emoji) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+	if (!messageId || !emoji){
+		loggerWss.info(`sendReaction: something went wrong. messageId'${messageId}' emoji'${emoji}'`)
+		return
+	}
+    if (wss && wss.readyState === WebSocket.OPEN) {
         const data = {
             type: "new_reaction",
             emoji: emoji,
             reply_to: messageId
         }
-        ws.send(JSON.stringify(data))
-        loggerWss.debug(`Sent reaction ${emoji} to message ${messageId}`)
+		if (sendSafe(data)) {
+			loggerWss.debug(`Sent reaction ${emoji} to message ${messageId}`)
+		} else {
+			loggerWss.error('sendReaction: failed to send reaction')
+		}
     }
 }
 
@@ -288,13 +315,17 @@ function showMessageContextMenu(event, messageId, messageUser, messageText, mess
 }
 
 function deleteMessage(messageId) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (wss && wss.readyState === WebSocket.OPEN) {
         const data = {
             type: "delete_message",
             message_id: messageId
         }
-        ws.send(JSON.stringify(data))
-        loggerWss.debug(`Sent delete request for message ${messageId}`)
+		try {
+			sendSafe(data)
+			loggerWss.debug(`Sent delete request for message ${messageId}`)
+		} catch (err) {
+			loggerWss.error('deleteMessage: failed to send delete request', err)
+		}
     }
 }
 
@@ -326,8 +357,27 @@ function handleMessageDeletion(data) {
             actionsContainer.remove()
         }
         
-        messageElement.removeEventListener('dblclick', () => {})
-        messageElement.removeEventListener('contextmenu', () => {})
+		// remove any stored handlers for this message
+		if (messageHandlers.has(messageId)) {
+			const stored = messageHandlers.get(messageId)
+			const el = stored.element
+			const h = stored.handlers
+			if (h.dblclick) el.removeEventListener('dblclick', h.dblclick)
+			if (h.contextmenu) el.removeEventListener('contextmenu', h.contextmenu)
+			if (h.replyClick) {
+				const replyBtn = el.querySelector('.reply-btn')
+				if (replyBtn) replyBtn.removeEventListener('click', h.replyClick)
+			}
+			if (h.reactionClick) {
+				const reactionBtn = el.querySelector('.reaction-add-btn')
+				if (reactionBtn) reactionBtn.removeEventListener('click', h.reactionClick)
+			}
+			messageHandlers.delete(messageId)
+		} else {
+			// best-effort fallback
+			try { messageElement.removeEventListener('dblclick', () => {}) } catch(e){}
+			try { messageElement.removeEventListener('contextmenu', () => {}) } catch(e){}
+		}
         
         if (messageReactions.has(messageId)) {
             messageReactions.delete(messageId)
@@ -592,7 +642,7 @@ function updateWatchersList(watchers) {
 }
 
 function sendWatcherUpdate(isWatching, imageurl = '', currentTime = 0, isPlaying = false, isUptodate = false) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    if (wss && wss.readyState === WebSocket.OPEN) {
         const finalImageUrl = imageurl || getUserImageUrl()
         
         const data = {
@@ -603,7 +653,9 @@ function sendWatcherUpdate(isWatching, imageurl = '', currentTime = 0, isPlaying
             is_playing: isPlaying,
             is_uptodate: isUptodate
         }
-        ws.send(JSON.stringify(data))
+		if (!sendSafe(data)) {
+			loggerWss.error('sendWatcherUpdate: failed to send watcher update')
+		}
     }
 }
 
@@ -661,8 +713,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 					roompsw: ROOM_PSW,
 					lastMessageDate: lastMessageDate
 				}).toString()
-				const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${queryParams}`)
-				attachSocketEvents(newSocket)
+				try {
+					const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${queryParams}`)
+					attachSocketEvents(newSocket)
+				} catch (err) {
+					loggerWss.error('connectWebSocket: failed to create socket', err)
+					// reconnect
+					setTimeout(() => connectWebSocket(2000), 2000)
+				}
 			}, reconnectDelay)
 		} else {
 			loggerWss.error("Max reconnect attempts reached. Could not reconnect to WebSocket.")
@@ -676,6 +734,31 @@ document.addEventListener("DOMContentLoaded", async () => {
 			if (chatRoomName && chatRoomName.textContent.includes("(connecting..)")){
 				chatRoomName.textContent = chatRoomName.textContent.replace(" (connecting..)", "")
 			}
+
+			lastPong = Date.now()
+			if (heartbeatInterval) clearInterval(heartbeatInterval)
+			heartbeatInterval = setInterval(() => {
+				if (!wss || wss.readyState !== WebSocket.OPEN){
+					loggerWss.warn(`heartbeatInterval: wss.readyState'${wss.readyState}'`)
+					return
+				}
+				const lastpong_relative = Date.now() - lastPong
+				if (lastpong_relative > 10000) { // 10 seconds
+					loggerWss.warn('heartbeatInterval: No pong received within threshold, closing socket')
+					try { 
+						wss.close(1001, 'heartbeat_timeout') 
+					} catch(e){ 
+						loggerWss.warn("heartbeatInterval: could not close wss. e:", )
+					} 
+					return
+				}
+				if (lastpong_relative < 3000) {
+					loggerWss.debug(`Not sending ping request. lastping'${(lastpong_relative/1000).toFixed(3)}s'`)
+					return
+				}
+				// loggerWss.debug(`Sending ping request.`)
+				sendSafe({ type: 'ping', ts: Date.now() })
+			}, 4000)
 			
 			setTimeout(() => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
@@ -691,13 +774,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		socket.onmessage = (r) => {
-			const data = JSON.parse(r.data)
+			let data = null
+			try {
+				data = JSON.parse(r.data)
+			} catch (err) {
+				loggerWss.error('Failed to parse incoming message:', err)
+				return
+			}
+
+			if (data && data.type === 'pong') {
+				// loggerWss.debug('Got pong')
+				lastPong = Date.now()
+				return
+			}
+			lastPong = Date.now()
+
 			waitingForMessage = 0
 			// loggerWss.debug("Message received", data)
 
 			if (data.type == "room_info") {
-				chatRoomName.innerHTML = `Chat - ${data.room_name}`
-				inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
+				if (chatRoomName) chatRoomName.innerHTML = `Chat - ${data.room_name}`
+				if (inputRoomName) inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
 			} else if (data.type == "new_message") {
 				addMessage(data)
 			} else if (data.type == "new_reaction") {
@@ -712,8 +809,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 				
 				if (isPagination) {
 					const messagesContainer = document.getElementById("chat-content")
-					const scrollTop = messagesContainer.scrollTop
-					const scrollHeight = messagesContainer.scrollHeight
+					let scrollTop = 0
+					let scrollHeight = 0
+					if (messagesContainer) {
+						scrollTop = messagesContainer.scrollTop
+						scrollHeight = messagesContainer.scrollHeight
+					}
 					
 					data.messages.forEach((message) => {
 						if (message.message_type === "new_reaction") {
@@ -796,9 +897,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 				loggerWss.warn("couldnt match the type.", data.type)
 			}
 		}
-
-		socket.onclose = () => {
-			loggerWss.info("WebSocket connection closed")
+		
+		socket.onclose = (ev) => {
+			loggerWss.info("WebSocket connection closed", `ev:${ev}`, ev.code ? `code:${ev.code}` : '')
+			if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
 			connectWebSocket(2000)
 		}
 
@@ -806,7 +908,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			loggerWss.error("WebSocket error:", error)
 		}
 
-		ws = socket
+		wss = socket
 	}
 
 	connectWebSocket(0)
@@ -859,17 +961,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 		
 		isLoadingMessages = true
 		
-		if (ws && ws.readyState === WebSocket.OPEN) {
+		if (wss && wss.readyState === WebSocket.OPEN) {
 			const data = {
 				type: "load_more_messages",
 				before_message_id: oldestMessageId
 			}
-			ws.send(JSON.stringify(data))
-			loggerWss.debug(`Loading more messages before ID: ${oldestMessageId}`)
+			if (sendSafe(data)) {
+				loggerWss.debug(`Loading more messages before ID: ${oldestMessageId}`)
+			} else {
+				loggerWss.error('loadMoreMessages: failed to request more messages')
+			}
 		}
 	}
 
 	function sendMessage() {
+		if (!messageInput) {
+			loggerWss.error("something went wrong while sending message: no messageInput")
+			return
+		}
 		const message = messageInput.value.trim()
 		if (message) {
 			const messageData = {
@@ -881,14 +990,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 				messageData.reply_to = replyState.replyToId
 			}
 
-			ws.send(JSON.stringify(messageData))
+			if (!sendSafe(messageData)) {
+				loggerWss.error('sendMessage: failed to send message')
+			}
 			waitingForMessage++
 			const sentMessage = waitingForMessage
 			setTimeout(() => {
-				if (waitingForMessage === sentMessage){
-					loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
-					ws.close()
-				}
+					if (waitingForMessage === sentMessage){
+						loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
+						try { wss.close(1001, 'message_timeout') } catch(e) { try { wss.close(1001, 'message_timeout') } catch(e) {} }
+					}
 			}, 3000);
 			messageInput.value = ""
 			
@@ -1033,39 +1144,46 @@ document.addEventListener("DOMContentLoaded", async () => {
 			} else {
 				reply_txt = text
 			}
-			messageDiv.addEventListener('dblclick', () => {
+
+			// register handlers so they can be removed later
+			const handlers = {}
+
+			handlers.dblclick = () => {
 				const isDeleted = messageDiv.style.opacity === '0.5' && messageDiv.style.filter === 'grayscale(100%)'
 				if (!isDeleted) {
-					
 					setReplyMode(messageId, user, reply_txt, messageDiv)
 				}
-			})
+			}
+			messageDiv.addEventListener('dblclick', handlers.dblclick)
 
-			messageDiv.addEventListener('contextmenu', (e) => {
+			handlers.contextmenu = (e) => {
 				e.preventDefault()
 				showMessageContextMenu(e, messageId, user, reply_txt, messageDiv)
-			})
+			}
+			messageDiv.addEventListener('contextmenu', handlers.contextmenu)
 
 			const replyBtn = messageDiv.querySelector('.reply-btn')
 			if (replyBtn) {
-				replyBtn.addEventListener('click', () => {
-					setReplyMode(messageId, user, reply_txt, messageDiv)
-				})
+				handlers.replyClick = () => setReplyMode(messageId, user, reply_txt, messageDiv)
+				replyBtn.addEventListener('click', handlers.replyClick)
 			}
-			
+
 			const reactionBtn = messageDiv.querySelector('.reaction-add-btn')
 			if (reactionBtn) {
-				reactionBtn.addEventListener('click', (e) => {
+				handlers.reactionClick = (e) => {
 					e.stopPropagation()
 					showReactionModal(reactionBtn, messageId)
-				})
+				}
+				reactionBtn.addEventListener('click', handlers.reactionClick)
 			}
+
+			messageHandlers.set(messageId, { element: messageDiv, handlers })
 		}
 
 		if (isPagination) {
-			messages.insertBefore(messageDiv, messages.firstChild)
+			if (messages) messages.insertBefore(messageDiv, messages.firstChild)
 		} else {
-			messages.appendChild(messageDiv)
+			if (messages) messages.appendChild(messageDiv)
 		}
 		
 		// deleted styling
@@ -1092,7 +1210,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		if (!isPagination) {
 			if (window.scrollMessagesToBottom) {
 				window.scrollMessagesToBottom()
-			} else {
+			} else if (messages) {
 				messages.scrollTop = messages.scrollHeight
 			}
 		}
@@ -1213,8 +1331,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 	}, 2000)
 	
 	window.addEventListener('beforeunload', () => {
+		// clear intervals
 		if (watcherUpdateInterval) {
 			clearInterval(watcherUpdateInterval)
 		}
+
+		// remove global handlers
+		try { document.removeEventListener('click', bodyClickHandler) } catch(e){}
+		try { document.removeEventListener('keydown', globalKeydownHandler) } catch(e){}
+		try { const messagesEl = document.getElementById('chat-content'); if (messagesEl) messagesEl.removeEventListener('scroll', messagesScrollHandler) } catch(e){}
+
+		// remove per-message handlers
+		messageHandlers.forEach((val, id) => {
+			const el = val.element
+			const h = val.handlers
+			try { if (h.dblclick) el.removeEventListener('dblclick', h.dblclick) } catch(e){}
+			try { if (h.contextmenu) el.removeEventListener('contextmenu', h.contextmenu) } catch(e){}
+			try { const replyBtn = el.querySelector('.reply-btn'); if (replyBtn && h.replyClick) replyBtn.removeEventListener('click', h.replyClick) } catch(e){}
+			try { const reactionBtn = el.querySelector('.reaction-add-btn'); if (reactionBtn && h.reactionClick) reactionBtn.removeEventListener('click', h.reactionClick) } catch(e){}
+		})
+		messageHandlers.clear()
+
+		// close websocket gracefully
+		try {
+			if (wss && wss.readyState === WebSocket.OPEN) {
+				try {
+					wss.close(1000, 'client closing')
+				} catch(e) {
+					try { wss.close(1000, 'client closing') } catch(e){}
+				}
+			}
+		} catch(e){}
 	})
 })

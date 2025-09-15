@@ -5,7 +5,7 @@ const { spawn } = require('child_process')
 const fs = require('fs')
 const keytar = require('keytar')
 const { Menu } = require('electron')
-const youtubedl = require('youtube-dl-exec')
+const { create: createYoutubeDl } = require('youtube-dl-exec')
 const WebSocket = require('ws')
 
 // const bcrypt = require('bcryptjs')
@@ -33,6 +33,27 @@ const logger = {
 		console.log(`[${timestamp}] [DEBUG]`, ...args)
 	}
 }
+
+const ytdl_binName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
+const ytdl_binPath = app.isPackaged ? path.join(
+	process.resourcesPath,
+	'app.asar.unpacked',
+	'node_modules',
+	'youtube-dl-exec',
+	'bin',
+	ytdl_binName
+) :  path.join(
+	__dirname,
+	'node_modules',
+	'youtube-dl-exec',
+	'bin',
+	ytdl_binName
+)
+logger.debug("ytdl_path:", ytdl_binPath)
+const youtubedl = createYoutubeDl(ytdl_binPath)
+
+
+
 
 const subtitleCache = new Map()
 
@@ -380,7 +401,9 @@ const createWindow = async () => {
 	
 	win.loadFile(path.join(__dirname, 'views/login.html'))
 	// win.loadFile(path.join(__dirname, 'views/index.html'))
-	win.webContents.openDevTools()
+	if (!app.isPackaged){
+		win.webContents.openDevTools()
+	}
 	await updateYtDlp()
 }
 
@@ -520,7 +543,15 @@ const sendVideoSyncMessage = async (message) => {
 			}
 		}, 5000)
 		
-		videoSyncWS.send(JSON.stringify(message))
+		try {
+			if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+				throw new Error('WebSocket not open')
+			}
+			videoSyncWS.send(JSON.stringify(message))
+		} catch (err) {
+			pendingWsRequests.delete(requestId)
+			reject(err)
+		}
 	})
 }
 
@@ -818,7 +849,7 @@ const getVideoUrl_VLC = async () => {
 	}
 }
 
-const abortVLC = async (isVideoChange = false) => {
+const abortVLC = async () => {
 	if (proc_vlc){
 		const _proc = proc_vlc
 		proc_vlc = null
@@ -846,10 +877,9 @@ const abortVLC = async (isVideoChange = false) => {
 		status: 'stopped',
 		isPlaying: false
 	})
-	
-	if (!isVideoChange && !isInlineWatching) {
-		disconnectVideoSyncWS()
-	}
+
+	disconnectVideoSyncWS()
+
 }
 
 const checkVideoUrl = async (url) => {
@@ -865,7 +895,6 @@ const checkVideoUrl = async (url) => {
 		}
 		
 		try {
-
 			const _streamUrl = await youtubedl(url, {
 				getUrl: true,
 				format: 'bv*[height=1080][ext=webm]+ba',
@@ -920,7 +949,7 @@ const setVideoVLC = async (url) => {
 	
 	logger.info("Restarting VLC for video change")
 	if (proc_vlc || isVLCwatching) {
-		await abortVLC(true)
+		await abortVLC()
 		
 		let attempts = 0
 		while (proc_vlc && attempts < 10) {
@@ -1096,7 +1125,7 @@ const startVideoInline = async () => {
 	
 	if (isVLCwatching) {
 		logger.info("Stopping VLC for inline video")
-		await abortVLC(true)
+		await abortVLC()
 		
 		let attempts = 0
 		while (proc_vlc && attempts < 10) {
@@ -1417,15 +1446,15 @@ const openVLC = async () => {
 				}
 			})
 
-			proc_vlc.on('error', (error) => {
+			proc_vlc.on('error', async (error) => {
 				logger.error(`VLC error: ${error.message}`)
-				abortVLC()
+				await abortVLC()
 				reject(`VLC launch error: ${error.message}`)
 			})
 
-			proc_vlc.on('close', (code) => {
+			proc_vlc.on('close', async (code) => {
 				logger.info(`VLC closed with code'${code}'`)
-				abortVLC()
+				await abortVLC()
 				if (code === 0) {
 					resolve('VLC exited successfully')
 				} else {
@@ -1808,8 +1837,8 @@ app.whenReady().then(() => {
 	createWindow()
 })
 
-app.on('window-all-closed', () => {
-	abortVLC()
+app.on('window-all-closed', async () => {
+	await abortVLC()
 	if (process.platform !== 'darwin') {
 		app.quit()
 	}

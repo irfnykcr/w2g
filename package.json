@@ -39,6 +39,13 @@
 			],
 			"icon": "winicon.png"
 		},
+		"nsis": {
+			"createStartMenuShortcut": false,
+			"oneClick": false,
+			"runAfterFinish": false,
+			"createDesktopShortcut": true,
+			"allowToChangeInstallationDirectory": true
+		},
 		"files": [
 			"**/*",
 			"!test_server/**/*"

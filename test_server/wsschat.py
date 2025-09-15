@@ -1,6 +1,7 @@
 import logging
 from traceback import print_exc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from asyncio import create_task, sleep
 from fastapi.middleware.cors import CORSMiddleware
 from json import loads, dumps
 from json import JSONDecodeError
@@ -629,6 +630,9 @@ class ChatApp:
 				try:
 					if websocket.client_state.value == 1:  # CONNECTED state
 						await websocket.send_text(dumps(data))
+					else:
+						logger.error(f"send_message_to_room: Error sending message to {user_data['username']}. websocket.client_state.value'{websocket.client_state.value}'")
+
 				except:
 					print_exc()
 					logger.error(f"send_message_to_room: Error sending message to {user_data['username']}")
@@ -685,6 +689,14 @@ async def websocket_endpoint(
 				data = await websocket.receive_text()
 				try:
 					message_data = loads(data)
+
+					if message_data.get("type") == "ping":
+						try:
+							await websocket.send_text(dumps({"type": "pong", "ts": time()}))
+						except:
+							print_exc()
+						continue
+
 					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
