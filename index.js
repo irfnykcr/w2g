@@ -516,10 +516,15 @@ const disconnectVideoSyncWS = () => {
 		clearTimeout(wsReconnectTimeout)
 		wsReconnectTimeout = null
 	}
+	sendVideoStatus({
+		status: 'stopped',
+		isPlaying: false
+	})
 	if (videoSyncWS) {
 		videoSyncWS.close()
 		videoSyncWS = null
 	}
+	logger.info("disconnectVideoSyncWS: successful.")
 }
 
 const sendVideoSyncMessage = async (message) => {
@@ -556,6 +561,10 @@ const sendVideoSyncMessage = async (message) => {
 }
 
 const handleVideoSyncMessage = async (message) => {
+	if (!isVLCwatching){
+		logger.warn(`isVLCwatching'${isVLCwatching}' proc_vlc'${proc_vlc}'(notincheck)`)
+		return
+	}
 	const { type, requestId } = message
 	
 	if (requestId && pendingWsRequests.has(requestId)) {
@@ -849,7 +858,7 @@ const getVideoUrl_VLC = async () => {
 	}
 }
 
-const abortVLC = async () => {
+const abortVLC = async (is_videochange=false) => {
 	if (proc_vlc){
 		const _proc = proc_vlc
 		proc_vlc = null
@@ -873,13 +882,11 @@ const abortVLC = async () => {
 		logger.info("cleared server interval")
 	}
 	
-	sendVideoStatus({
-		status: 'stopped',
-		isPlaying: false
-	})
+	if (!is_videochange){
+		disconnectVideoSyncWS()
+	}
 
-	disconnectVideoSyncWS()
-
+	return
 }
 
 const checkVideoUrl = async (url) => {
@@ -948,15 +955,15 @@ const setVideoVLC = async (url) => {
 	}
 	
 	logger.info("Restarting VLC for video change")
-	if (proc_vlc || isVLCwatching) {
-		await abortVLC()
-		
-		let attempts = 0
-		while (proc_vlc && attempts < 10) {
-			await new Promise(resolve => setTimeout(resolve, 100))
-			attempts++
-		}
+
+	await abortVLC(true)
+	
+	let attempts = 0
+	while (proc_vlc && attempts < 10) {
+		await new Promise(resolve => setTimeout(resolve, 100))
+		attempts++
 	}
+
 	return await openVLC()
 }
 
@@ -1363,7 +1370,7 @@ const openVLC = async () => {
 			}
 
 			isVLCwatching = true
-			
+
 			let connectionAttempts = 0
 			while (connectionAttempts < 3) {
 				if (await connectVideoSyncWS()) {
@@ -1379,24 +1386,28 @@ const openVLC = async () => {
 				logger.warn("Failed to connect to video sync after 3 attempts")
 				return resolve(false)
 			}
-		
+
 			const r = await makeRequest_videoSync("get_playerstatus")
 			if (!r.status) {
 				logger.warn("Failed to get player status")
+				await abortVLC()
 				return resolve(false)
 			}
 			
 			let CURRENT_VIDEO_SERVER = r.data.url.value
 			const SERVER_IS_PLAYING = r.data.is_playing.value
+			const SERVER_TIME = r.data.time.value
 			
 			let VLC_ARGS = [
 				`--intf`, `qt`,
 				`--extraintf`, `http`,
 				`--http-port`, `${VLC_PORT}`,
 				`--http-password`, `${VLC_HTTP_PASS}`,
-				"--avcodec-hw", "none",
-				'--http-reconnect',
+				`--avcodec-hw`, `none`,
+				`--start-time`, SERVER_TIME,
+				`--http-reconnect`,
 				`--video-on-top`,
+				`--no-one-instance`
 			]
 			
 			let isYouTubeUrl = false
@@ -1421,7 +1432,6 @@ const openVLC = async () => {
 				logger.info("not a ytvideo")
 				VLC_ARGS.push(CURRENT_VIDEO_SERVER)
 			}
-			VLC_ARGS.push(`:start-time=${r.data.time.value}`)
 
 			logger.info("vlcargs:", VLC_ARGS)
 			proc_vlc = spawn(VLC_PATH, VLC_ARGS)
@@ -1454,8 +1464,8 @@ const openVLC = async () => {
 
 			proc_vlc.on('close', async (code) => {
 				logger.info(`VLC closed with code'${code}'`)
-				await abortVLC()
 				if (code === 0) {
+					await abortVLC()
 					resolve('VLC exited successfully')
 				} else {
 					resolve(`VLC exited with code ${code}`)
@@ -1524,6 +1534,7 @@ const startVLCMonitoring = async () => {
 
 	rsub = await requestSubtitle()
 	logger.info("requestSubtitle:", rsub)
+	await setTimeVLC(0)
 
 	vlcInterval = setInterval(async () => {
 		if (!isVLCwatching || !proc_vlc) { 

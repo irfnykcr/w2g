@@ -73,15 +73,14 @@ def delete_subtitle(roomid):
 	subtitle_path = path.join(SUBTITLES_DIR, f"{roomid}.vtt")
 	try:
 		if path.exists(subtitle_path):
-			logger.info("subtitle deleted:", subtitle_path)
+			logger.info(f"subtitle deleted subtitle_path'{subtitle_path}'")
 			remove(subtitle_path)
 			return True
 		else:
-			logger.error("path not found:", subtitle_path)
 			return False
 	except:
 		print_exc()
-		logger.info("file:", subtitle_path)
+		logger.info(f"file subtitle_path'{subtitle_path}'")
 		return False
 
 def subtitle_exists(roomid):
