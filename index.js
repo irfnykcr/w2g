@@ -926,15 +926,17 @@ const checkVideoUrl = async (url) => {
 	return url
 }
 
-const setVideoVLC = async (url) => {
+const setVideoVLC = async (_url) => {
+	const url = _url.trim()
 	logger.info("setVideo->", url)
 	
 	if (proc_vlc && isVLCwatching) {
 		try {
 			const currentUrl = await getVideoUrl_VLC()
 			let isSameVideo = false
+			const isYouTube = isYouTubeUrl(url)
 			
-			if (isYouTubeUrl(url)) {
+			if (isYouTube) {
 				const cachedUrls = youtubeUrlCache.get(url)
 				if (cachedUrls && cachedUrls.urls) {
 					isSameVideo = cachedUrls.urls.includes(currentUrl)
@@ -949,22 +951,56 @@ const setVideoVLC = async (url) => {
 				logger.info("VLC is already playing the same video, no restart needed")
 				return true
 			}
+
+			const openwithabort = async ()=>{
+				await abortVLC(true)
+				let attempts = 0
+				while (proc_vlc && attempts < 10) {
+					await new Promise(resolve => setTimeout(resolve, 100))
+					attempts++
+				}
+				return await openVLC()
+			}
+
+			if (isYouTube){
+				logger.info("youtube url, restarting.")
+				return await openwithabort()
+			}
+
+			const maxTries = 10
+			let tried = 0
+			while (tried <= maxTries) {
+				try {
+					if (!proc_vlc) { 
+						logger.debug(`proc_vlc'${proc_vlc}' so abort+start`)
+						return await openwithabort()
+					}
+					const r = await axios.post(
+						`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=in_play&input=${encodeURIComponent(url)}`,
+						null,
+						{ auth: { username: '', password: VLC_HTTP_PASS } }
+					)
+					logger.info(`setVideoVLC: r.status'${r.status}'`)
+					await new Promise(resolve => setTimeout(resolve, 250))
+					const currentUrl = await getVideoUrl_VLC()
+					if (currentUrl === url) {
+						logger.info("video changed!")
+						return true
+					}
+					logger.info("video not changed. retrying..")
+					tried++
+				} catch (error) {
+					logger.error("Failed to set time:", error.message)
+					return false
+				}
+			}
+			logger.info("video not changed. stopping.")
+			return await openwithabort()
 		} catch (error) {
 			logger.debug("Could not check current VLC URL:", error.message)
+			return false
 		}
 	}
-	
-	logger.info("Restarting VLC for video change")
-
-	await abortVLC(true)
-	
-	let attempts = 0
-	while (proc_vlc && attempts < 10) {
-		await new Promise(resolve => setTimeout(resolve, 100))
-		attempts++
-	}
-
-	return await openVLC()
 }
 
 ipcMain.handle('setvideo-vlc', async (_, url) => {
