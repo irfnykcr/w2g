@@ -27,11 +27,41 @@ let replyState = {
 
 let messagesById = new Map()
 let messageReactions = new Map()
+let userColors = new Map()
 let wss
 let USER 
 let hasMoreMessages = true
 let isLoadingMessages = false
 let oldestMessageId = null 
+
+const availableColors = [
+	'#ffe119', '#4363d8', '#f58231', '#911eb4',
+	'#46f0f0', '#f032e6', '#bcf60c', '#008080', '#e6beff',
+	'#9a6324', '#aaffc3',
+	'#000075', '#ffffff', '#000000'
+]
+
+function simpleHash(str) {
+	let hash = 0
+	for (let i = 0; i < str.length; i++) {
+		const char = str.charCodeAt(i)
+		hash = ((hash << 5) - hash) + char
+		hash = hash & hash
+	}
+	return Math.abs(hash)
+}
+
+function getUserColor(username) {
+	if (username === 'system') return '#FF4444'
+	if (userColors.has(username)) {
+		return userColors.get(username)
+	}
+	const hash = simpleHash(username)
+	const colorIndex = hash % availableColors.length
+	const color = availableColors[colorIndex]
+	userColors.set(username, color)
+	return color
+} 
 
 // focus tracking and notification system
 let isWindowFocused = true
@@ -144,8 +174,11 @@ function setReplyMode(messageId, user, message, messageElement) {
     
     if (replyPreview && replyToUser && replyToMessage) {
         replyToUser.textContent = user
+		replyToUser.style.color = getUserColor(user)
         replyToMessage.textContent = message
-        replyPreview.classList.remove('hidden')
+		
+        replyPreview.className = `mx-4 sm:mx-6 mb-2 p-3 bg-gray-700 rounded-md border-l-4 border-[${getUserColor(user)}]`
+
     }
     
     const inputField = document.getElementById('input-chatmessage')
@@ -356,8 +389,50 @@ function handleMessageDeletion(data) {
         if (actionsContainer) {
             actionsContainer.remove()
         }
+
+        const messageHeader = messageElement.querySelector('.message-header')
+        if (messageHeader) {
+            messageHeader.style.display = 'flex'
+        }
         
-		// remove any stored handlers for this message
+        const wasMiddleOrLast = messageElement.classList.contains('message-middle') || messageElement.classList.contains('message-last')
+        
+        messageElement.style.marginBottom = '12px'
+        messageElement.style.borderRadius = '8px'
+        
+        if (wasMiddleOrLast) {
+            const prevSibling = messageElement.previousElementSibling
+            const prevIsDeleted = prevSibling && (prevSibling.style.opacity === '0.5')
+            
+            if (!prevIsDeleted) {
+                messageElement.style.marginTop = '12px'
+            }
+        }
+        
+        const previousSibling = messageElement.previousElementSibling
+        if (previousSibling) {
+            previousSibling.classList.remove('message-middle', 'message-first')
+            previousSibling.classList.add('message-last')
+            previousSibling.style.borderRadius = '4px 4px 8px 8px'
+            previousSibling.style.marginBottom = '12px'
+        }
+        
+        const nextSibling = messageElement.nextElementSibling
+        if (nextSibling) {
+            const nextUser = nextSibling.getAttribute('data-message-user')
+            const deletedUser = messageElement.getAttribute('data-message-user')
+            
+            if (nextUser === deletedUser) {
+                const nextHeader = nextSibling.querySelector('.message-header')
+                if (nextHeader) {
+                    nextHeader.style.display = 'flex'
+                }
+                nextSibling.classList.remove('message-middle', 'message-last')
+                nextSibling.classList.add('message-first')
+                nextSibling.style.borderRadius = '8px 8px 4px 4px'
+            }
+        }
+        
 		if (messageHandlers.has(messageId)) {
 			const stored = messageHandlers.get(messageId)
 			const el = stored.element
@@ -374,7 +449,6 @@ function handleMessageDeletion(data) {
 			}
 			messageHandlers.delete(messageId)
 		} else {
-			// best-effort fallback
 			try { messageElement.removeEventListener('dblclick', () => {}) } catch(e){}
 			try { messageElement.removeEventListener('contextmenu', () => {}) } catch(e){}
 		}
@@ -549,11 +623,11 @@ function updateWatchersList(watchers) {
         }
         
         const syncStatus = watcher.is_uptodate
-        const newBorderClass = syncStatus ? 'border-green-500' : 'border-red-500'
-        const currentBorderClass = watcherElement.classList.contains('border-green-500') ? 'border-green-500' : 'border-red-500'
+        const newBorderClass = syncStatus ? `border-[${getUserColor(watcher.username)}]` : 'border-red-500'
+        const currentBorderClass = watcherElement.classList.contains(`border-[${getUserColor(watcher.username)}]`) ? `border-[${getUserColor(watcher.username)}]` : 'border-red-500'
         
         if (newBorderClass !== currentBorderClass) {
-            watcherElement.classList.remove('border-green-500', 'border-red-500')
+            watcherElement.classList.remove(`border-[${getUserColor(watcher.username)}]`, 'border-red-500')
             watcherElement.classList.add(newBorderClass)
         }
         
@@ -578,13 +652,13 @@ function updateWatchersList(watchers) {
                     class="w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
                 />
-                <div class="w-6 h-6 rounded-full bg-gray-600 items-center justify-center text-xs font-bold text-turkuazz flex-shrink-0 watcher-fallback" style="display: none;">
+                <div class="w-6 h-6 rounded-full bg-gray-600 items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback" style="display: none;">
                     ${watcher.username.charAt(0).toUpperCase()}
                 </div>
                 `
             } else {
                 imageHtml = `
-                <div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-turkuazz flex-shrink-0 watcher-fallback">
+                <div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
                     ${watcher.username.charAt(0).toUpperCase()}
                 </div>
                 `
@@ -593,7 +667,7 @@ function updateWatchersList(watchers) {
             watcherElement.innerHTML = `
                 ${imageHtml}
                 <div class="flex flex-col min-w-0 flex-1">
-                    <div class="font-medium text-gray-300 truncate text-xs watcher-username">${watcher.username}</div>
+                    <div class="font-medium text-[${getUserColor(watcher.username)}] truncate text-xs watcher-username">${watcher.username}</div>
                     <div class="flex items-center gap-1 text-xs text-gray-400">
                         <span class="watcher-status">${statusIcon} ${formattedTime}</span>
                         <span class="watcher-sync">${syncIcon}</span>
@@ -1009,6 +1083,53 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 	}
 
+	function shouldGroupWithPrevious(currentUser, previousElement, hasReply = false, isDeleted = false) {
+		if (!previousElement) return false
+		const previousUser = previousElement.getAttribute('data-message-user')
+		const isCurrentDeleted = currentUser === 'system' || isDeleted
+		const isPreviousDeleted = previousElement.style.opacity === '0.5' || previousElement.querySelector('.text-gray-500 em')
+		const previousHasReply = previousElement.querySelector('[onclick*="scrollToMessage"]') !== null
+		if (isCurrentDeleted || isPreviousDeleted || hasReply || previousHasReply) return false
+		return previousUser === currentUser && currentUser !== 'system'
+	}
+
+	function shouldGroupWithNext(currentUser, nextElement, hasReply = false, isDeleted = false) {
+		if (!nextElement) return false
+		const nextUser = nextElement.getAttribute('data-message-user')
+		const isCurrentDeleted = currentUser === 'system' || isDeleted
+		const isNextDeleted = nextElement.style.opacity === '0.5' || nextElement.querySelector('.text-gray-500 em')
+		const nextHasReply = nextElement.querySelector('[onclick*="scrollToMessage"]') !== null
+		if (isCurrentDeleted || isNextDeleted || hasReply || nextHasReply) return false
+		return nextUser === currentUser && currentUser !== 'system'
+	}
+
+	function updateMessageGrouping(messageElement, isFirst, isLast) {
+		messageElement.classList.remove('message-first', 'message-middle', 'message-last', 'message-single')
+		const messageHeader = messageElement.querySelector('.message-header')
+		
+		if (isFirst && isLast) {
+			messageElement.classList.add('message-single')
+			messageElement.style.marginBottom = '12px'
+			messageElement.style.borderRadius = '8px'
+			if (messageHeader) messageHeader.style.display = 'flex'
+		} else if (isFirst) {
+			messageElement.classList.add('message-first')
+			messageElement.style.marginBottom = '-24px'
+			messageElement.style.borderRadius = '8px 8px 4px 4px'
+			if (messageHeader) messageHeader.style.display = 'flex'
+		} else if (isLast) {
+			messageElement.classList.add('message-last')
+			messageElement.style.marginBottom = '12px'
+			messageElement.style.borderRadius = '4px 4px 8px 8px'
+			if (messageHeader) messageHeader.style.display = 'none'
+		} else {
+			messageElement.classList.add('message-middle')
+			messageElement.style.marginBottom = '-24px'
+			messageElement.style.borderRadius = '4px'
+			if (messageHeader) messageHeader.style.display = 'none'
+		}
+	}
+
 	function addMessage(data, isHistoryMessage = false, isPagination = false) {
 		const messageId = data.id
 		const user = data.user
@@ -1068,7 +1189,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		const messageDiv = document.createElement("div")
-		messageDiv.className = "mb-3 p-3 bg-dark-hover rounded-md border-l-4 border-turkuazz message-container"
+		const userColor = getUserColor(user)
+		messageDiv.className = "p-3 bg-dark-hover rounded-md border-l-4 message-container"
+		messageDiv.style.borderLeftColor = userColor
 		messageDiv.setAttribute('data-message-id', messageId)
 		messageDiv.setAttribute('data-message-user', user)
 		
@@ -1078,7 +1201,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 				replyContent = `
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs" 
 						 title="Original message was deleted">
-						<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${replyTo.user}</span></div>
 						<div class="text-gray-500 mt-1"><em>Original message was deleted</em></div>
 					</div>
 				`
@@ -1093,7 +1216,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
 						 onclick="scrollToMessage(${replyTo.id})" 
 						 title="Click to scroll to original message">
-						<div class="text-gray-400">Replying to <span class="text-turkuazz font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${replyTo.user}</span></div>
 						<div class="text-gray-300 mt-1">${reply_txt}</div>
 					</div>
 				`
@@ -1104,12 +1227,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 		
 		messageDiv.innerHTML = `
 			${replyContent}
-			<div class="flex justify-between items-start mb-2">
-				<span class="font-semibold ${user === "system" ? "text-admin" : "text-turkuazz"} text-sm break-words">${user}</span>
+			<div class="message-header flex justify-between items-start mb-2">
+				<span class="font-semibold ${user === "system" ? "text-admin" : ""} text-sm break-words" style="${user !== "system" ? `color: ${userColor}` : ""}">${user}</span>
 				<div class="message-actions flex items-center gap-2 text-xs text-gray-500 ml-2 flex-shrink-0">
-					<span>${date}</span>
+					<span class="message-date">${date}</span>
 					${user !== "system" && messageId ?
-						`<button class="reply-btn hover:text-turkuazz transition-colors duration-200" title="Reply">
+						`<button class="reply-btn hover:text-[${getUserColor(user)}] transition-colors duration-200" title="Reply">
 							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-reply" viewBox="0 0 16 16">
 								<path d="M6.598 5.013a.144.144 0 0 1 .202.134V6.3a.5.5 0 0 0 .5.5c.667 0 2.013.005 3.3.822.984.624 1.99 1.76 2.595 3.876-1.02-.983-2.185-1.516-3.205-1.799a8.7 8.7 0 0 0-1.921-.306 7 7 0 0 0-.798.008h-.013l-.005.001h-.001L7.3 9.9l-.05-.498a.5.5 0 0 0-.45.498v1.153c0 .108-.11.176-.202.134L2.614 8.254l-.042-.028a.147.147 0 0 1 0-.252l.042-.028zM7.8 10.386q.103 0 .223.006c.434.02 1.034.086 1.7.271 1.326.368 2.896 1.202 3.94 3.08a.5.5 0 0 0 .933-.305c-.464-3.71-1.886-5.662-3.46-6.66-1.245-.79-2.527-.942-3.336-.971v-.66a1.144 1.144 0 0 0-1.767-.96l-3.994 2.94a1.147 1.147 0 0 0 0 1.946l3.994 2.94a1.144 1.144 0 0 0 1.767-.96z"/>
 							</svg>
@@ -1120,7 +1243,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			<div class="flex flex-wrap items-end gap-2">
 				<div class="text-gray-300 text-sm break-words flex-1 min-w-0">${processedContent}</div>
 				${user !== "system" && messageId ?
-					`<button class="reaction-add-btn hover:text-turkuazz transition-colors duration-200 opacity-70 hover:opacity-100 flex-shrink-0 self-end" title="Add reaction">
+					`<button class="reaction-add-btn hover:text-[${getUserColor(user)}] transition-colors duration-200 opacity-70 hover:opacity-100 flex-shrink-0 self-end" title="Add reaction">
 						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
 							<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
 							<path d="M4.285 9.567a.5.5 0 0 1 .683.183A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0 3.032-1.75.5.5 0 1 1 .866.5A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1-3.898-2.25.5.5 0 0 1 .183-.683M7 6.5C7 7.328 6.552 8 6 8s-1-.672-1-1.5S5.448 5 6 5s1 .672 1 1.5m4 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S9.448 5 10 5s1 .672 1 1.5"/>
@@ -1181,9 +1304,41 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		if (isPagination) {
-			if (messages) messages.insertBefore(messageDiv, messages.firstChild)
+			if (messages) {
+				messages.insertBefore(messageDiv, messages.firstChild)
+				
+				const nextSibling = messageDiv.nextElementSibling
+				const hasReply = replyTo !== null
+				const isGroupedWithNext = shouldGroupWithNext(user, nextSibling, hasReply, isDeleted)
+				const isFirst = true
+				
+				updateMessageGrouping(messageDiv, isFirst, !isGroupedWithNext)
+				
+				if (isGroupedWithNext) {
+					const nextHasReply = nextSibling.querySelector('[onclick*="scrollToMessage"]') !== null
+					const nextIsDeleted = nextSibling.style.opacity === '0.5' || nextSibling.querySelector('.text-gray-500 em')
+					const isNextFirst = !shouldGroupWithNext(nextSibling.getAttribute('data-message-user'), nextSibling.nextElementSibling, nextHasReply, nextIsDeleted)
+					updateMessageGrouping(nextSibling, false, isNextFirst)
+				}
+			}
 		} else {
-			if (messages) messages.appendChild(messageDiv)
+			if (messages) {
+				const previousSibling = messages.lastElementChild
+				const hasReply = replyTo !== null
+				const isGroupedWithPrevious = shouldGroupWithPrevious(user, previousSibling, hasReply, isDeleted)
+				
+				messages.appendChild(messageDiv)
+				
+				const isLast = true
+				updateMessageGrouping(messageDiv, !isGroupedWithPrevious, isLast)
+				
+				if (isGroupedWithPrevious) {
+					const previousHasReply = previousSibling.querySelector('[onclick*="scrollToMessage"]') !== null
+					const previousIsDeleted = previousSibling.style.opacity === '0.5' || previousSibling.querySelector('.text-gray-500 em')
+					const isPreviousLast = !shouldGroupWithPrevious(previousSibling.getAttribute('data-message-user'), previousSibling.previousElementSibling, previousHasReply, previousIsDeleted)
+					updateMessageGrouping(previousSibling, isPreviousLast, false)
+				}
+			}
 		}
 		
 		// deleted styling
