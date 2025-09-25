@@ -798,6 +798,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}, reconnectDelay)
 		} else {
 			loggerWss.error("Max reconnect attempts reached. Could not reconnect to WebSocket.")
+			if (chatRoomName && chatRoomName.textContent.includes("(connecting..)")){
+				chatRoomName.textContent = chatRoomName.textContent.replace(" (connecting..)", "")
+			}
+			chatRoomName.textContent += " (connection failed!)"
 		}
 	}
 
@@ -818,12 +822,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 				}
 				const lastpong_relative = Date.now() - lastPong
 				if (lastpong_relative > 10000) { // 10 seconds
-					loggerWss.warn('heartbeatInterval: No pong received within threshold, closing socket')
+					loggerWss.warn('heartbeatInterval: No pong received within threshold, terminating socket')
+					if (heartbeatInterval) { 
+						clearInterval(heartbeatInterval) 
+						heartbeatInterval = null 
+					}
 					try { 
-						wss.close(1001, 'heartbeat_timeout') 
+						wss.terminate()
 					} catch(e){ 
-						loggerWss.warn("heartbeatInterval: could not close wss. e:", )
+						try {
+							wss.close(3001, 'heartbeat_timeout')
+						} catch(e2) {
+							loggerWss.warn(`heartbeatInterval: could not terminate/close wss. e:${e} e2:${e2}`)
+						}
 					} 
+					wss = null
+					connectWebSocket(2000)
 					return
 				}
 				if (lastpong_relative < 3000) {
@@ -1070,10 +1084,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 			waitingForMessage++
 			const sentMessage = waitingForMessage
 			setTimeout(() => {
-					if (waitingForMessage === sentMessage){
-						loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
-						try { wss.close(1001, 'message_timeout') } catch(e) { try { wss.close(1001, 'message_timeout') } catch(e) {} }
+				if (waitingForMessage === sentMessage){
+					loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
+					if (heartbeatInterval) { 
+						clearInterval(heartbeatInterval) 
+						heartbeatInterval = null 
 					}
+					try { 
+						wss.terminate() 
+					} catch(e) { 
+						try { 
+							wss.close(3001, 'message_timeout') 
+						} catch(e2) {
+							loggerWss.warn(`message timeout: could not terminate/close wss. e:${e} e2:${e2}`)
+						}
+					}
+					wss = null
+					connectWebSocket(2000)
+				}
 			}, 3000);
 			messageInput.value = ""
 			

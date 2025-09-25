@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	getServerEndpoint: () => ipcRenderer.invoke('get-serverendpoint'),
 	
 	getConfig: () => ipcRenderer.invoke('get-config'),
-	saveConfig: (vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass) => ipcRenderer.invoke('save-config', vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass),
+	saveConfig: (vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass, timesynctolerance) => ipcRenderer.invoke('save-config', vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass, timesynctolerance),
 	
 	setSubtitle: (fileData, fileName) => ipcRenderer.invoke('set-subtitle', fileData, fileName),
 	addSubtitleVLC: (filePath) => ipcRenderer.invoke('add-subtitle-vlc', filePath),

@@ -56,6 +56,12 @@ function createConfigModalHTML() {
 							<input type="text" id="modal-vlc_http_pass" name="vlc_http_pass" required class="flex-1 p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
 						</div>
 					</div>
+					<div class="mb-6">
+						<div class="flex items-center space-x-4">
+							<label for="modal-time_sync_tolerance" class="font-semibold text-turkuazz w-32">Time sync tolerance (s)</label>
+							<input type="number" step="0.1" min="0.1" id="modal-time_sync_tolerance" name="time_sync_tolerance" required class="flex-1 p-2 border border-dark-hover rounded-md bg-dark-bg text-white">
+						</div>
+					</div>
 					<button id="modal-save-config" type="button" class="w-full p-2 bg-turkuazz text-dark-bg rounded-md hover:bg-dark-turkuazz">Save</button>
 				</div>
 				<p id="modal-status-text" class="text-center mt-4 hidden"></p>
@@ -119,6 +125,7 @@ async function showConfigModal() {
 		document.getElementById('modal-vlc_finder').checked = appConfig.VLC_FINDER
 		document.getElementById('modal-vlc_path').value = appConfig.VLC_PATH
 		document.getElementById('modal-vlc_http_pass').value = appConfig.VLC_HTTP_PASS
+		document.getElementById('modal-time_sync_tolerance').value = appConfig.TIME_SYNC_TOLERANCE
 		
 		const modal = document.getElementById('config-modal')
 		modal.classList.remove('hidden')
@@ -168,26 +175,25 @@ async function saveConfigFromModal() {
 	const vlcFinderEl = document.getElementById('modal-vlc_finder')
 	const vlcPathEl = document.getElementById('modal-vlc_path')
 	const vlcHttpPassEl = document.getElementById('modal-vlc_http_pass')
+	const timeSyncToleranceEl = document.getElementById('modal-time_sync_tolerance')
 	
 	const vlcport = parseInt(vlcPortEl.value, 10) || 0
 	const serverendpoint = serverEndpointEl.value.trim()
 	const vlcfinder = vlcFinderEl.checked
 	const vlcpath = vlcPathEl.value.trim()
 	const vlchttppass = vlcHttpPassEl.value.trim()
+	const timesynctolerance = parseFloat(timeSyncToleranceEl.value) || 1.5
 	
-	if (!vlcport || !serverendpoint || !vlcpath || !vlchttppass) {
+	if (!vlcport || !serverendpoint || !vlcpath || !vlchttppass || !timesynctolerance) {
 		showModalStatus('Please fill all required fields correctly.', false)
 		return
 	}
 	
 	try {
-		const result = await window.electronAPI.saveConfig(vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass)
+		const result = await window.electronAPI.saveConfig(vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass, timesynctolerance)
 		
 		if (result) {
 			showModalStatus('Config saved successfully!')
-			setTimeout(() => {
-				hideConfigModal()
-			}, 1500)
 		} else {
 			showModalStatus('Failed to save config.', false)
 		}

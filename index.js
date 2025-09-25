@@ -174,6 +174,7 @@ ipcMain.handle('get-serverendpoint', (event) => {
 
 let VLC_PORT = appConfig.VLC_PORT
 let VLC_HTTP_PASS = appConfig.VLC_HTTP_PASS
+let TIME_SYNC_TOLERANCE = appConfig.TIME_SYNC_TOLERANCE || 1.5
 let VLC_PATH
 
 if (appConfig.VLC_FINDER) {
@@ -348,10 +349,11 @@ let isInlineWatching = false
 let modeTransitionLock = false
 
 let videoSyncWS = null
-let wsReconnectTimeout = null
 let pendingWsRequests = new Map()
 let wsRequestId = 0
 let isClientUpToDate = false
+let lastConnectionAttempt = 0
+let reconnectCount = 0
 
 async function updateYtDlp() {
   try {
@@ -432,6 +434,13 @@ const connectVideoSyncWS = async () => {
 		return true
 	}
 	
+	const now = Date.now()
+	if (now - lastConnectionAttempt < 5000) {
+		return false
+	}
+	
+	lastConnectionAttempt = now
+	
 	if (videoSyncWS) {
 		videoSyncWS.close()
 		videoSyncWS = null
@@ -455,10 +464,7 @@ const connectVideoSyncWS = async () => {
 			videoSyncWS.on('open', () => {
 				logger.info("Video sync WebSocket connected")
 				isClientUpToDate = false
-				if (wsReconnectTimeout) {
-					clearTimeout(wsReconnectTimeout)
-					wsReconnectTimeout = null
-				}
+				reconnectCount = 0
 				if (mainWindow && mainWindow.webContents) {
 					mainWindow.webContents.send('video-sync-status', { connected: true })
 				}
@@ -474,7 +480,7 @@ const connectVideoSyncWS = async () => {
 				}
 			})
 			
-			videoSyncWS.on('close', () => {
+			videoSyncWS.on('close', async () => {
 				logger.warn("Video sync WebSocket disconnected")
 				for (const [id, { reject }] of pendingWsRequests.entries()) {
 					try { reject(new Error('WebSocket closed')) } catch {}
@@ -486,9 +492,15 @@ const connectVideoSyncWS = async () => {
 					mainWindow.webContents.send('video-sync-status', { connected: false })
 				}
 				if (isVLCwatching || isInlineWatching) {
-					wsReconnectTimeout = setTimeout(() => {
+					reconnectCount++
+					if (reconnectCount > 2) {
+						logger.warn("Too many reconnect attempts, stopping VLC")
+						await abortVLC()
+						return
+					}
+					setTimeout(() => {
 						connectVideoSyncWS()
-					}, 1000)
+					}, 5000)
 				}
 			})
 			
@@ -512,10 +524,6 @@ const connectVideoSyncWS = async () => {
 }
 
 const disconnectVideoSyncWS = () => {
-	if (wsReconnectTimeout) {
-		clearTimeout(wsReconnectTimeout)
-		wsReconnectTimeout = null
-	}
 	sendVideoStatus({
 		status: 'stopped',
 		isPlaying: false
@@ -546,7 +554,7 @@ const sendVideoSyncMessage = async (message) => {
 				pendingWsRequests.delete(requestId)
 				reject(new Error("WebSocket request timeout"))
 			}
-		}, 5000)
+		}, 3000)
 		
 		try {
 			if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
@@ -817,6 +825,19 @@ const makeRequest_videoSync = async (type, data = {}) => {
 		return { status: response.success !== false, data: response.data || response }
 	} catch (error) {
 		logger.error(`VideoSync request error: ${type}`, error.message)
+		if (error.message.includes("timeout") && videoSyncWS) {
+			logger.warn("WebSocket timeout detected, force terminating connection")
+			try {
+				videoSyncWS.terminate()
+			} catch {
+				videoSyncWS.close()
+			}
+			videoSyncWS = null
+			for (const [id, { reject }] of pendingWsRequests.entries()) {
+				try { reject(new Error('Connection terminated')) } catch {}
+			}
+			pendingWsRequests.clear()
+		}
 		return { status: false, error: error.message }
 	}
 }
@@ -1036,19 +1057,21 @@ ipcMain.handle('get-config', async () => {
 	return JSON.parse(JSON.stringify(appConfig))
 })
 
-ipcMain.handle('save-config', async (event, vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass) => {
+ipcMain.handle('save-config', async (event, vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass, timesynctolerance) => {
 	try {
 		appConfig["VLC_PORT"] = vlcport
 		appConfig["SERVER_ENDPOINT"] = serverendpoint
 		appConfig["VLC_FINDER"] = vlcfinder
 		appConfig["VLC_PATH"] = vlcpath
 		appConfig["VLC_HTTP_PASS"] = vlchttppass
+		appConfig["TIME_SYNC_TOLERANCE"] = timesynctolerance
 		
 		fs.writeFileSync(appConfigPath, JSON.stringify(appConfig, null, 4), 'utf-8')
 		
 		VLC_PORT = vlcport
 		SERVER_ENDPOINT = serverendpoint
 		VLC_HTTP_PASS = vlchttppass
+		TIME_SYNC_TOLERANCE = timesynctolerance
 		if (!vlcfinder) {
 			VLC_PATH = vlcpath
 		}
@@ -1287,7 +1310,7 @@ const startInlineMonitoring = () => {
 						mainWindow.webContents.send('inline-video-set', { url: serverStatus.url.value })
 					}
 					
-					if (serverStatus.time && serverStatus.time.value > 0) {
+					if (serverStatus.time && serverStatus.time.value > 0 && Math.abs(inlineCurrentTime - serverStatus.time.value) > TIME_SYNC_TOLERANCE) {
 						mainWindow.webContents.send('inline-video-sync-time', { time: serverStatus.time.value })
 						inlineCurrentTime = serverStatus.time.value
 					}
@@ -1618,7 +1641,7 @@ const startVLCMonitoring = async () => {
 							// }
 						}
 						
-						if (serverStatus.time && serverStatus.time.value > 0 && Math.abs(currentTime - serverStatus.time.value) > 5) {
+						if (serverStatus.time && serverStatus.time.value > 0 && Math.abs(currentTime - serverStatus.time.value) > TIME_SYNC_TOLERANCE) {
 							await setTimeVLC(serverStatus.time.value)
 						}
 						
@@ -1723,6 +1746,9 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentState !== stateVLC) {
+				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+					return
+				}
 				logger.debug("VLC state change detected")
 				const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isplayingVLC, "new_time": timeVLC})
 				if (result.status) {
@@ -1732,6 +1758,9 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentTime !== 0 && Math.abs(currentTime - timeVLC) > 1.5) {
+				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+					return
+				}
 				logger.debug("VLC seek detected")
 				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC})
 				if (result.status) {
@@ -1742,6 +1771,9 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (timeVLC !== 0 && Math.abs(lastSentTime - timeVLC) > 5) {
+				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+					return
+				}
 				logger.debug(`sending regular update, lastSentTime'${lastSentTime}' timeVLC'${timeVLC}'`)
 				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC})
 				if (result.status) {
