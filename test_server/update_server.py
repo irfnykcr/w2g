@@ -167,10 +167,10 @@ def complete_upload(upload_id: str = Form(...), os_type: str = Form(...), passwo
     
     yml_content = f"""version: {upload_info["version"]}
 files:
-  - url: /downloads/{upload_info["filename"]}
+  - url: /updates/downloads/{upload_info["filename"]}
     sha512: {sha}
     size: {size}
-path: /downloads/{upload_info["filename"]}
+path: /updates/downloads/{upload_info["filename"]}
 releaseDate: '{datetime.now().isoformat()}Z'"""
     
     (os_dir / "latest.yml").write_text(yml_content)

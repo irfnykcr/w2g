@@ -32,6 +32,7 @@ class UpdateManager {
 		autoUpdater.autoDownload = false
 		autoUpdater.autoInstallOnAppQuit = false
 		autoUpdater.disableDifferentialDownload = true
+		autoUpdater.disableWebInstaller = true
 
 		autoUpdater.on('checking-for-update', () => {
 			this.logger.info('Checking for updates...')
