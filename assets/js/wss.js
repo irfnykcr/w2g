@@ -32,7 +32,10 @@ let wss
 let USER 
 let hasMoreMessages = true
 let isLoadingMessages = false
-let oldestMessageId = null 
+let oldestMessageId = null
+let isConnecting = false
+let reconnectTimeout = null
+let connectionTimeout = null 
 
 const availableColors = [
 	'#ffe119', '#4363d8', '#f58231', '#911eb4',
@@ -131,7 +134,19 @@ function playNotificationSound() {
 	}
 }
 
-
+function chatStatus(status) {
+	const chatRoomName = document.querySelector("#chat-roomname")
+	if (chatRoomName) {
+		chatRoomName.textContent = chatRoomName.textContent.replace(/( \(connecting\.\.\)| \(device is offline\)| \(connection failed!\))/g, "")
+	}
+	if (status === "connecting") {
+		chatRoomName.textContent += " (connecting..)"
+	} else if (status === "offline") {
+		chatRoomName.textContent += " (device is offline)"
+	} else if (status === "failed") {
+		chatRoomName.textContent += " (connection failed!)"
+	}
+}
 
 
 function getUserImageUrl() {
@@ -772,14 +787,39 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let waitingForMessage = 0
 
 	function connectWebSocket(reconnectDelay=0) {
-		if (chatRoomName && !chatRoomName.textContent.includes("(connecting..)")){
-			chatRoomName.textContent += " (connecting..)"
+		if (isConnecting) {
+			loggerWss.warn('Connection attempt already in progress')
+			return
 		}
-		const maxReconnectAttempts = 10
+		
+		if (wss && (wss.readyState === WebSocket.CONNECTING || wss.readyState === WebSocket.OPEN)) {
+			loggerWss.warn('WebSocket already connecting or connected')
+			return
+		}
+
+		if (reconnectTimeout) {
+			clearTimeout(reconnectTimeout)
+			reconnectTimeout = null
+		}
+
+		isConnecting = true
+		chatStatus("connecting")
+		
+		const maxReconnectAttempts = 25
 		if (reconnectAttempts < maxReconnectAttempts) {
 			reconnectAttempts++
 			loggerWss.info(`Attempting to connect... (${reconnectAttempts}/${maxReconnectAttempts})`)
-			setTimeout(() => {
+			
+			reconnectTimeout = setTimeout(() => {
+				reconnectTimeout = null
+				
+				if (!navigator.onLine) {
+					loggerWss.warn('Device is offline, delaying connection')
+					isConnecting = false
+					reconnectTimeout = setTimeout(() => connectWebSocket(1000), 5000)
+					return
+				}
+				
 				const queryParams = new URLSearchParams({
 					user: USER,
 					psw: USER_PSW,
@@ -787,21 +827,28 @@ document.addEventListener("DOMContentLoaded", async () => {
 					roompsw: ROOM_PSW,
 					lastMessageDate: lastMessageDate
 				}).toString()
+				
 				try {
 					const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${queryParams}`)
+					
+					connectionTimeout = setTimeout(() => {
+						if (newSocket.readyState === WebSocket.CONNECTING) {
+							loggerWss.warn('Connection timeout, closing socket')
+							newSocket.close()
+						}
+					}, 10000)
+					
 					attachSocketEvents(newSocket)
 				} catch (err) {
 					loggerWss.error('connectWebSocket: failed to create socket', err)
-					// reconnect
-					setTimeout(() => connectWebSocket(2000), 2000)
+					isConnecting = false
+					reconnectTimeout = setTimeout(() => connectWebSocket(2000), 2000)
 				}
 			}, reconnectDelay)
 		} else {
+			isConnecting = false
 			loggerWss.error("Max reconnect attempts reached. Could not reconnect to WebSocket.")
-			if (chatRoomName && chatRoomName.textContent.includes("(connecting..)")){
-				chatRoomName.textContent = chatRoomName.textContent.replace(" (connecting..)", "")
-			}
-			chatRoomName.textContent += " (connection failed!)"
+			chatStatus("failed")
 		}
 	}
 
@@ -809,44 +856,64 @@ document.addEventListener("DOMContentLoaded", async () => {
 	function attachSocketEvents(socket) {
 		socket.onopen = () => {
 			loggerWss.info("WebSocket connection established")
-			if (chatRoomName && chatRoomName.textContent.includes("(connecting..)")){
-				chatRoomName.textContent = chatRoomName.textContent.replace(" (connecting..)", "")
+			
+			if (connectionTimeout) {
+				clearTimeout(connectionTimeout)
+				connectionTimeout = null
 			}
+			
+			isConnecting = false
+			reconnectAttempts = 0
+			
+			chatStatus("connecting")
 
 			lastPong = Date.now()
-			if (heartbeatInterval) clearInterval(heartbeatInterval)
+			if (heartbeatInterval) {
+				clearInterval(heartbeatInterval)
+				heartbeatInterval = null
+			}
+			
 			heartbeatInterval = setInterval(() => {
 				if (!wss || wss.readyState !== WebSocket.OPEN){
-					loggerWss.warn(`heartbeatInterval: wss.readyState'${wss.readyState}'`)
+					loggerWss.warn(`heartbeatInterval: wss.readyState'${wss ? wss.readyState : 'null'}'`)
+					if (heartbeatInterval) {
+						clearInterval(heartbeatInterval)
+						heartbeatInterval = null
+					}
 					return
 				}
+				
 				const lastpong_relative = Date.now() - lastPong
-				if (lastpong_relative > 10000) { // 10 seconds
-					loggerWss.warn('heartbeatInterval: No pong received within threshold, terminating socket')
+				if (lastpong_relative > 12000) {
+					loggerWss.warn('heartbeatInterval: No response, forcing close')
 					if (heartbeatInterval) { 
 						clearInterval(heartbeatInterval) 
 						heartbeatInterval = null 
 					}
-					try { 
-						wss.terminate()
-					} catch(e){ 
-						try {
+					
+					try {
+						if (!navigator.onLine) {
+							if (wss.terminate) {
+								wss.terminate()
+							} else {
+								wss.close()
+							}
+						} else {
 							wss.close(3001, 'heartbeat_timeout')
-						} catch(e2) {
-							loggerWss.warn(`heartbeatInterval: could not terminate/close wss. e:${e} e2:${e2}`)
 						}
-					} 
-					wss = null
-					connectWebSocket(2000)
+						wss = null
+					} catch(e) {
+						loggerWss.debug('Error closing in heartbeat:', e)
+					}
 					return
 				}
-				if (lastpong_relative < 3000) {
-					loggerWss.debug(`Not sending ping request. lastping'${(lastpong_relative/1000).toFixed(3)}s'`)
+				
+				if (lastpong_relative < 4000) {
 					return
 				}
-				// loggerWss.debug(`Sending ping request.`)
+				
 				sendSafe({ type: 'ping', ts: Date.now() })
-			}, 4000)
+			}, 5000)
 			
 			setTimeout(() => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
@@ -987,13 +1054,67 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 		
 		socket.onclose = (ev) => {
-			loggerWss.info("WebSocket connection closed", `ev:${ev}`, ev.code ? `code:${ev.code}` : '')
-			if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
-			connectWebSocket(2000)
+			loggerWss.info("WebSocket connection closed", `code:${ev.code}`, `reason:${ev.reason || 'none'}`)
+			
+			if (heartbeatInterval) { 
+				clearInterval(heartbeatInterval)
+				heartbeatInterval = null 
+			}
+			if (connectionTimeout) {
+				clearTimeout(connectionTimeout)
+				connectionTimeout = null
+			}
+			
+			if (wss){
+				if (wss === socket) {
+					if (wss.close){
+						wss.close()
+					}
+					wss = null
+				}
+			}
+			if (socket){
+				if (socket.close){
+					socket.close()
+				}
+				socket = null
+			}
+			
+			isConnecting = false
+			
+			if (ev.code !== 1000) {
+				const delay = navigator.onLine ? 2000 : 5000
+				reconnectTimeout = setTimeout(() => connectWebSocket(1000), delay)
+			}
 		}
 
 		socket.onerror = (error) => {
 			loggerWss.error("WebSocket error:", error)
+
+			if (heartbeatInterval) { 
+				clearInterval(heartbeatInterval)
+				heartbeatInterval = null 
+			}
+			if (connectionTimeout) {
+				clearTimeout(connectionTimeout)
+				connectionTimeout = null
+			}
+			if (wss){
+				if (wss === socket) {
+					if (wss.close){
+						wss.close()
+					}
+					wss = null
+				}
+			}
+			if (socket){
+				if (socket.close){
+					socket.close()
+				}
+				socket = null
+			}
+			
+			isConnecting = false
 		}
 
 		wss = socket
@@ -1513,18 +1634,73 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 	}, 2000)
 	
+	window.addEventListener('online', () => {
+		loggerWss.info('Device back online')
+		if (!wss || wss.readyState !== WebSocket.OPEN) {
+			reconnectAttempts = Math.max(0, reconnectAttempts - 2)
+			connectWebSocket(500)
+		}
+	})
+
+	window.addEventListener('offline', () => {
+		loggerWss.warn('Device went offline - force closing connection')
+		chatStatus("offline")
+		
+		if (heartbeatInterval) {
+			clearInterval(heartbeatInterval)
+			heartbeatInterval = null
+		}
+		
+		if (reconnectTimeout) {
+			clearTimeout(reconnectTimeout)
+			reconnectTimeout = null
+		}
+		
+		if (connectionTimeout) {
+			clearTimeout(connectionTimeout)
+			connectionTimeout = null
+		}
+		
+		if (wss) {
+			try {
+				if (wss.terminate) {
+					wss.terminate()
+				} else {
+					wss.close()
+				}
+			} catch(e) {
+				loggerWss.debug('Error force closing:', e)
+			}
+			wss = null
+		}
+		
+		isConnecting = false
+	})
+
 	window.addEventListener('beforeunload', () => {
-		// clear intervals
 		if (watcherUpdateInterval) {
 			clearInterval(watcherUpdateInterval)
 		}
+		
+		if (heartbeatInterval) {
+			clearInterval(heartbeatInterval)
+			heartbeatInterval = null
+		}
+		
+		if (reconnectTimeout) {
+			clearTimeout(reconnectTimeout)
+			reconnectTimeout = null
+		}
+		
+		if (connectionTimeout) {
+			clearTimeout(connectionTimeout)
+			connectionTimeout = null
+		}
 
-		// remove global handlers
 		try { document.removeEventListener('click', bodyClickHandler) } catch(e){}
 		try { document.removeEventListener('keydown', globalKeydownHandler) } catch(e){}
 		try { const messagesEl = document.getElementById('chat-content'); if (messagesEl) messagesEl.removeEventListener('scroll', messagesScrollHandler) } catch(e){}
 
-		// remove per-message handlers
 		messageHandlers.forEach((val, id) => {
 			const el = val.element
 			const h = val.handlers
@@ -1535,15 +1711,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 		})
 		messageHandlers.clear()
 
-		// close websocket gracefully
 		try {
 			if (wss && wss.readyState === WebSocket.OPEN) {
-				try {
-					wss.close(1000, 'client closing')
-				} catch(e) {
-					try { wss.close(1000, 'client closing') } catch(e){}
-				}
+				wss.close(1000, 'page_unload')
 			}
 		} catch(e){}
+		wss = null
+		isConnecting = false
 	})
 })

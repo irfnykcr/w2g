@@ -1,6 +1,6 @@
 {
 	"name": "w2g",
-	"version": "0.2.3.1",
+	"version": "0.2.4",
 	"description": "",
 	"license": "ISC",
 	"author": "",
@@ -28,6 +28,7 @@
 	"build": {
 		"appId": "com.turkuazz.w2g",
 		"productName": "TURKUAZZ",
+		"artifactName": "${productName}-${version}.${ext}",
 		"publish": {
 			"provider": "generic",
 			"url": "https://w2g.turkuazz.vip/updates/"

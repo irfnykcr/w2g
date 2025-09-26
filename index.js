@@ -8,6 +8,7 @@ const { Menu } = require('electron')
 const { create: createYoutubeDl } = require('youtube-dl-exec')
 const WebSocket = require('ws')
 const UpdateManager = require('./updateManager')
+const os = require('os')
 
 // const bcrypt = require('bcryptjs')
 // console.log(bcrypt.hashSync("123", 10))
@@ -354,6 +355,9 @@ let wsRequestId = 0
 let isClientUpToDate = false
 let lastConnectionAttempt = 0
 let reconnectCount = 0
+let reconnectTimeout = null
+let networkMonitorInterval = null
+let isOnline = true
 
 let updateManager = null
 
@@ -416,6 +420,8 @@ const createWindow = async () => {
 		logger.warn("Failed to setup debug credentials:", e.message)
 	}
 	
+	startNetworkMonitoring()
+	
 	win.loadFile(path.join(__dirname, 'views/login.html'))
 	if (isDev){
 		win.webContents.openDevTools()
@@ -441,6 +447,96 @@ function sendVideoStatus(status, additionalData = {}) {
 		logger.error("sendVideoStatus: there was a problem.")
 		return false
 	}
+}
+
+const checkNetworkConnectivity = async () => {
+	try {
+		const interfaces = os.networkInterfaces()
+		for (const name of Object.keys(interfaces)) {
+			for (const iface of interfaces[name]) {
+				if (!iface.internal && iface.family === 'IPv4') {
+					return true
+				}
+			}
+		}
+		return false
+	} catch {
+		return false
+	}
+}
+
+const handleOnlineEvent = () => {
+	logger.info('Device back online')
+	if (reconnectTimeout) {
+		clearTimeout(reconnectTimeout)
+		reconnectTimeout = null
+	}
+	reconnectCount = 0
+	if (mainWindow) {
+		const currentTitle = mainWindow.getTitle()
+		const newTitle = currentTitle.replace(/\s*\(offline\)/gi, '')
+		mainWindow.setTitle(newTitle)
+	}
+}
+
+const handleOfflineEvent = () => {
+	logger.warn('Device went offline - force closing video sync connection')
+	
+	if (reconnectTimeout) {
+		clearTimeout(reconnectTimeout)
+		reconnectTimeout = null
+	}
+	reconnectCount = 0
+	
+	for (const [id, { reject }] of pendingWsRequests.entries()) {
+		try { reject(new Error('Network offline')) } catch {}
+	}
+	pendingWsRequests.clear()
+	
+	if (videoSyncWS) {
+		try {
+			if (videoSyncWS.terminate) {
+				videoSyncWS.terminate()
+			} else {
+				videoSyncWS.close()
+			}
+		} catch(e) {
+			logger.debug('Error force closing video sync:', e)
+		}
+		videoSyncWS = null
+	}
+	
+	if (mainWindow && mainWindow.webContents) {
+		mainWindow.webContents.send('video-sync-status', { connected: false })
+	}
+
+	if (mainWindow) {
+		const currentTitle = mainWindow.getTitle()
+		if (!currentTitle.includes('(offline)')) {
+			mainWindow.setTitle(currentTitle + ' (offline)')
+		}
+	}
+
+	abortVLC()
+	abortInline()
+}
+
+const startNetworkMonitoring = () => {
+	if (networkMonitorInterval) {
+		clearInterval(networkMonitorInterval)
+	}
+	
+	networkMonitorInterval = setInterval(async () => {
+		const currentlyOnline = await checkNetworkConnectivity()
+		
+		if (isOnline && !currentlyOnline) {
+			isOnline = false
+			handleOfflineEvent()
+		} else if (!isOnline && currentlyOnline) {
+			isOnline = true
+			handleOnlineEvent()
+		}
+	}, 2000)
 }
 
 const connectVideoSyncWS = async () => {
@@ -505,17 +601,13 @@ const connectVideoSyncWS = async () => {
 				if (mainWindow && mainWindow.webContents) {
 					mainWindow.webContents.send('video-sync-status', { connected: false })
 				}
-				if (isVLCwatching || isInlineWatching) {
-					reconnectCount++
-					if (reconnectCount > 2) {
-						logger.warn("Too many reconnect attempts, stopping VLC")
-						await abortVLC()
-						return
-					}
-					setTimeout(() => {
-						connectVideoSyncWS()
-					}, 5000)
+				
+				if (reconnectTimeout) {
+					clearTimeout(reconnectTimeout)
+					reconnectTimeout = null
 				}
+				
+				reconnectCount = 0
 			})
 			
 			videoSyncWS.on('error', (error) => {
@@ -1202,7 +1294,7 @@ const setVideoInline = async (url) => {
 	return result.status
 }
 
-const stopVideoInline = async () => {
+const abortInline = async () => {
 	isInlineWatching = false
 	
 	if (inlineVideoInterval) {
@@ -1355,7 +1447,7 @@ const openVLC = async () => {
 		try {
 			if (isInlineWatching) {
 				logger.info("Stopping inline video for VLC")
-				await stopVideoInline()
+				await abortInline()
 				
 				let attempts = 0
 				while (isInlineWatching && attempts < 10) {
@@ -1750,7 +1842,7 @@ ipcMain.handle('set-inline-video', async (event, url) => {
 })
 
 ipcMain.handle('stop-inline-video', async (event) => {
-	return await stopVideoInline()
+	return await abortInline()
 })
 
 ipcMain.handle('stop-vlc', async (event) => {
@@ -1872,6 +1964,10 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', async () => {
+	if (networkMonitorInterval) {
+		clearInterval(networkMonitorInterval)
+		networkMonitorInterval = null
+	}
 	await abortVLC()
 	if (process.platform !== 'darwin') {
 		app.quit()
