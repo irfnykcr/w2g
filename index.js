@@ -39,14 +39,14 @@ const isDev = !app.isPackaged
 
 const ytdl_binName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
 const ytdl_binPath = isDev ? path.join(
-	process.resourcesPath,
-	'app.asar.unpacked',
+	__dirname,
 	'node_modules',
 	'youtube-dl-exec',
 	'bin',
 	ytdl_binName
-) :  path.join(
-	__dirname,
+) : path.join(
+	process.resourcesPath,
+	'app.asar.unpacked',
 	'node_modules',
 	'youtube-dl-exec',
 	'bin',
@@ -54,9 +54,6 @@ const ytdl_binPath = isDev ? path.join(
 )
 logger.debug("ytdl_path:", ytdl_binPath)
 const youtubedl = createYoutubeDl(ytdl_binPath)
-
-
-
 
 const subtitleCache = new Map()
 
@@ -860,7 +857,7 @@ const checkVideoUrl = async (url) => {
 		try {
 			const _streamUrl = await youtubedl(url, {
 				getUrl: true,
-				format: 'bv*[height=1080][ext=webm]+ba',
+				format: 'bv[height=1080]+ba',
 				noCheckCertificates: true,
 				noPlaylist: true,
 			})
@@ -875,7 +872,7 @@ const checkVideoUrl = async (url) => {
 			
 			return urls
 		} catch (e) {
-			logger.warn("YouTube URL processing failed:", e.message)
+			logger.warn("YouTube URL processing failed:", e.message || e)
 			return null
 		}
 	}
@@ -1421,7 +1418,7 @@ const openVLC = async () => {
 				const processedUrl = await checkVideoUrl(CURRENT_VIDEO_SERVER)
 				if (Array.isArray(processedUrl) && processedUrl.length === 2) {
 					logger.info("ytvideo with 2 urls")
-					VLC_ARGS.push('--no-video-title-show', processedUrl[0], `:input-slave=${processedUrl[1]}`)
+					VLC_ARGS.push('--no-video-title-show', processedUrl[0], `--input-slave=${processedUrl[1]}`)
 				} else {
 					logger.info("ytvideo with 1 url")
 					VLC_ARGS.push('--no-video-title-show', Array.isArray(processedUrl) ? processedUrl[0] : processedUrl)
