@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Update Available</title>
+    <link rel="stylesheet" href="../assets/css/update.css">
+</head>
+<body>
+    <div class="update-container">
+        <h1 class="update-title">Update Available</h1>
+        <div class="update-version" id="version-info">Version loading...</div>
+        
+        <div class="progress-container" id="progress-container">
+            <div class="progress-bar" id="progress-bar">
+                <span id="progress-percent">0%</span>
+            </div>
+            <div class="progress-text" id="progress-text">Preparing download...</div>
+        </div>
+        
+        <div class="status-message hidden" id="status-message"></div>
+        
+        <div class="button-group" id="button-group">
+            <button class="btn btn-primary" id="download-btn">Download & Install</button>
+            <button class="btn btn-secondary" id="quit-btn">Quit</button>
+        </div>
+    </div>
+
+    <script src="../assets/js/update.js"></script>
+</body>
+</html>

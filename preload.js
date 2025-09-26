@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 	addSubtitleVLC: (filePath) => ipcRenderer.invoke('add-subtitle-vlc', filePath),
 	uploadSubtitle: (arrayBuffer, filename) => ipcRenderer.invoke('upload-subtitle', arrayBuffer, filename),
 	requestSubtitles: () => ipcRenderer.invoke('request-subtitles'),
+	
+	getUpdateInfo: () => ipcRenderer.invoke('get-update-info'),
+	downloadUpdate: () => ipcRenderer.invoke('download-update'),
+	installUpdate: () => ipcRenderer.invoke('install-update'),
+	quitApp: () => ipcRenderer.invoke('quit-app'),
 
 	onVLCstatus: (callback) => {
 		ipcRenderer.on('vlc-status', (_, data) => {
@@ -89,8 +94,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			callback(data)
 		})
 	},
+	
+	onUpdateProgress: (callback) => {
+		ipcRenderer.on('update-progress', (_, data) => {
+			callback(data)
+		})
+	},
+	
+	onUpdateDownloaded: (callback) => {
+		ipcRenderer.on('update-downloaded', (_, data) => {
+			callback(data)
+		})
+	},
+	
+	onUpdateError: (callback) => {
+		ipcRenderer.on('update-error', (_, data) => {
+			callback(data)
+		})
+	},
 
 	gotoRoomJoin: () => ipcRenderer.send('goto-room_join'),
 	gotoIndex: () => ipcRenderer.send('goto-index'),
 	gotoLogin: () => ipcRenderer.send('goto-login'),
+	gotoUpdate: () => ipcRenderer.send('goto-update'),
 })

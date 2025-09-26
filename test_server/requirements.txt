@@ -1,5 +1,10 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
-websockets==13.1
+websockets
+python-socketio
+fastapi
+uvicorn[standard]
+python-multipart
+requests
 bcrypt==4.2.1
 mysql-connector-python
