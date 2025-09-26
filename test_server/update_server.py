@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Form, HTTPException, Request, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from json import dump, load
 from hashlib import sha256, sha512, md5
@@ -70,14 +70,31 @@ def get_latest_windows():
 
 @app.get("/downloads/{filename}")
 def download(filename: str):
+    print(f"got request for: {filename}")
     for os_type in ["linux", "darwin", "windows"]:
         file_path = updates_dir / "downloads" / os_type / filename
         if file_path.exists():
+            print(f"found in: {os_type}")
+            
+            def file_generator():
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            
             headers = {
                 "Content-Length": str(file_path.stat().st_size),
-                "Accept-Ranges": "bytes"
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f"attachment; filename=\"{filename}\"",
+                "Cache-Control": "no-cache, no-store, must-revalidate"
             }
-            return FileResponse(file_path, headers=headers)
+            return StreamingResponse(
+                file_generator(), 
+                media_type="application/octet-stream",
+                headers=headers
+            )
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/upload/start")
@@ -86,6 +103,7 @@ def start_upload(
     total_size: int = Form(...),
     version: str = Form(...),
     notes: str = Form("Update"),
+    sha512: str = Form(...),
     password: str = Form("")
 ):
     if not verify_password(password):
@@ -102,6 +120,7 @@ def start_upload(
         "total_size": total_size,
         "version": version,
         "notes": notes,
+        "sha512": sha512,
         "upload_path": str(updates_dir / "temp" / f"{upload_id}_{filename}")
     }
     
@@ -110,12 +129,12 @@ def start_upload(
     
     return {"upload_id": upload_id, "chunk_size": 5242880}
 
-@app.post("/upload/chunk")
-def upload_chunk(
-    upload_id: str = Form(...),
-    chunk_number: int = Form(...),
-    chunk: UploadFile = File(...),
-    password: str = Form("")
+@app.post("/upload/chunk/{upload_id}/{chunk_number}")
+async def upload_chunk(
+    upload_id: str,
+    chunk_number: int,
+    request: Request,
+    password: str = Query(...)
 ):
     if not verify_password(password):
         raise HTTPException(status_code=401, detail="Invalid password")
@@ -128,8 +147,9 @@ def upload_chunk(
     
     upload_path = Path(upload_info["upload_path"])
     
+    chunk_data = await request.body()
     with open(upload_path, "ab") as f:
-        shutil.copyfileobj(chunk.file, f)
+        f.write(chunk_data)
     
     current_size = upload_path.stat().st_size if upload_path.exists() else 0
     progress = (current_size / upload_info["total_size"]) * 100
@@ -163,14 +183,25 @@ def complete_upload(upload_id: str = Form(...), os_type: str = Form(...), passwo
     shutil.move(str(temp_path), str(final_path))
     
     size = final_path.stat().st_size
-    sha = get_sha512(final_path)
+    expected_size = upload_info["total_size"]
+    
+    if size != expected_size:
+        final_path.unlink()
+        raise HTTPException(status_code=400, detail=f"Size mismatch: expected {expected_size}, got {size}")
+    
+    uploaded_sha = get_sha512(final_path)
+    expected_sha = upload_info["sha512"]
+    
+    if uploaded_sha != expected_sha:
+        final_path.unlink()
+        raise HTTPException(status_code=400, detail=f"SHA512 mismatch: expected {expected_sha}, got {uploaded_sha}")
     
     yml_content = f"""version: {upload_info["version"]}
 files:
-  - url: /updates/downloads/{upload_info["filename"]}
-    sha512: {sha}
+  - url: downloads/{upload_info["filename"]}
+    sha512: {expected_sha}
     size: {size}
-path: /updates/downloads/{upload_info["filename"]}
+path: downloads/{upload_info["filename"]}
 releaseDate: '{datetime.now().isoformat()}Z'"""
     
     (os_dir / "latest.yml").write_text(yml_content)

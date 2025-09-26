@@ -310,6 +310,24 @@ class VideoSyncApp:
 		if roomid not in self.active_connections:
 			self.active_connections[roomid] = []
 		
+		existing_user_data = None
+		for user_data in self.active_connections[roomid]:
+			if user_data["user"] == user:
+				existing_user_data = user_data
+				break
+		
+		if existing_user_data:
+			logger.info(f"Kicking existing user connection: user'{user}' roomid'{roomid}'")
+			try:
+				await existing_user_data["websocket"].close(code=1008, reason="New connection established")
+			except:
+				print_exc()
+			
+			self.active_connections[roomid] = [
+				user_data for user_data in self.active_connections[roomid] 
+				if user_data["user"] != user
+			]
+		
 		self.active_connections[roomid].append({
 			"websocket": websocket, 
 			"user": user

@@ -179,6 +179,31 @@ class ChatApp:
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
+		
+		existing_user_data = None
+		for user_data in self.active_rooms[roomid]:
+			if user_data["username"] == user:
+				existing_user_data = user_data
+				break
+		
+		if existing_user_data:
+			logger.info(f"Kicking existing user connection: user'{user}' roomid'{roomid}'")
+			try:
+				await existing_user_data["websocket"].close(code=1008, reason="New connection established")
+			except:
+				print_exc()
+			
+			self.active_rooms[roomid] = [
+				user_data for user_data in self.active_rooms[roomid] 
+				if user_data["username"] != user
+			]
+			
+			if roomid in self.room_watchers:
+				self.room_watchers[roomid] = [
+					w for w in self.room_watchers[roomid] 
+					if w["username"] != user
+				]
+		
 		self.active_rooms[roomid].append({"websocket": websocket, "username": user})
 		if lastMessageDate > 0:
 			await self.send_history_to_websocket(websocket, roomid, lastMessageDate)

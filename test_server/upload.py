@@ -2,12 +2,20 @@ import requests
 import sys
 import os
 import time
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
 PASSWORD = os.getenv("VERSION_UPLOAD_PASSWORD")
 SERVER = os.getenv("UPDATES_SERVER")
+
+def get_sha512(file_path):
+    h = hashlib.sha512()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def format_bytes(b):
@@ -25,13 +33,16 @@ def chunked_upload(file_path, version, os_type, notes="Update"):
         return False
     
     file_size = file_path.stat().st_size
-    print(f"Uploading {file_path.name} ({format_bytes(file_size)})")
+    print(f"Calculating SHA512 checksum...")
+    file_sha512 = get_sha512(file_path)
+    print(f"Uploading {file_path.name} ({format_bytes(file_size)}) - SHA512: {file_sha512[:16]}...")
     
     start_data = {
         "filename": file_path.name,
         "total_size": file_size,
         "version": version,
         "notes": notes,
+        "sha512": file_sha512,
         "password": PASSWORD
     }
     
@@ -53,10 +64,13 @@ def chunked_upload(file_path, version, os_type, notes="Update"):
             if not chunk_data:
                 break
             
-            files = {"chunk": ("chunk", chunk_data)}
-            data = {"upload_id": upload_id, "chunk_number": chunk_number, "password": PASSWORD}
+            headers = {"Content-Type": "application/octet-stream"}
+            data = {"password": PASSWORD}
             
-            response = requests.post(f"{SERVER}/upload/chunk", files=files, data=data)
+            response = requests.post(f"{SERVER}/upload/chunk/{upload_id}/{chunk_number}", 
+                                   data=chunk_data, 
+                                   params=data, 
+                                   headers=headers)
             if response.status_code != 200:
                 print(f"Chunk {chunk_number} failed: {response.text}")
                 return False
