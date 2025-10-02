@@ -58,62 +58,64 @@ const youtubedl = createYoutubeDl(ytdl_binPath)
 
 const subtitleCache = new Map()
 
-const selectSubtitleForVlc = async (retries_left = 5) => {
-	if (retries_left<=0){
-		logger.error(`selectSubtitleForVlc: could not select subtitle.`)
-		return false
-	}
-	logger.info(`selectSubtitleForVlc: retries_left'${retries_left}'`)
-	try {
-		if (!isVLCwatching || !proc_vlc) {
-			throw Error("VLC not running, cannot add subtitle")
-		}
-		const statusResponse = await axios.post(
-			`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
-			null,
-			{
-				auth: { username: '', password: VLC_HTTP_PASS },
-				timeout: 2000
+const selectSubtitleForVlc = async (maxRetries = 5) => {
+	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		logger.info(`selectSubtitleForVlc: attempt ${attempt + 1}/${maxRetries}`)
+		try {
+			if (!isVLCwatching || !proc_vlc) {
+				throw Error("VLC not running, cannot add subtitle")
 			}
-		)
-		
-		if (statusResponse.data.information && statusResponse.data.information.category) {
-			const categories = statusResponse.data.information.category
-			let subtitleStreamId = null
+			const statusResponse = await axios.post(
+				`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
+				null,
+				{
+					auth: { username: '', password: VLC_HTTP_PASS },
+					timeout: 2000
+				}
+			)
 			
-			for (const [streamName, streamInfo] of Object.entries(categories)) {
-				if (streamInfo.Type === "Subtitle") {
-					const streamNumber = streamName.match(/Stream (\d+)/)?.[1]
-					if (streamNumber) {
-						subtitleStreamId = parseInt(streamNumber)
-						break
+			if (statusResponse.data.information && statusResponse.data.information.category) {
+				const categories = statusResponse.data.information.category
+				let subtitleStreamId = null
+				
+				for (const [streamName, streamInfo] of Object.entries(categories)) {
+					if (streamInfo.Type === "Subtitle") {
+						const streamNumber = streamName.match(/Stream (\d+)/)?.[1]
+						if (streamNumber) {
+							subtitleStreamId = parseInt(streamNumber)
+							break
+						}
+					}
+				}
+				
+				if (subtitleStreamId !== null) {
+					await axios.post(
+						`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
+						null,
+						{
+							auth: { username: '', password: VLC_HTTP_PASS },
+							params: { command: "subtitle_track", val: subtitleStreamId },
+							timeout: 2000
+						}
+					)
+					logger.info("Enabled subtitle stream:", subtitleStreamId)
+					return true
+				} else {
+					logger.info("No subtitle stream found")
+					if (attempt < maxRetries - 1) {
+						await new Promise(resolve => setTimeout(resolve, 300))
 					}
 				}
 			}
-			
-			if (subtitleStreamId !== null) {
-				await axios.post(
-					`http://127.0.0.1:${VLC_PORT}/requests/status.json`,
-					null,
-					{
-						auth: { username: '', password: VLC_HTTP_PASS },
-						params: { command: "subtitle_track", val: subtitleStreamId },
-						timeout: 2000
-					}
-				)
-				logger.info("Enabled subtitle stream:", subtitleStreamId)
-				return true
-			} else {
-				logger.info("No subtitle stream found")
+		} catch (enableError) {
+			logger.warn(`Failed to enable subtitle (attempt ${attempt + 1}/${maxRetries}):`, enableError.message)
+			if (attempt < maxRetries - 1) {
 				await new Promise(resolve => setTimeout(resolve, 300))
-				return selectSubtitleForVlc(retries_left-1)
 			}
 		}
-	} catch (enableError) {
-		logger.warn("Failed to enable subtitle:", enableError.message)
-		await new Promise(resolve => setTimeout(resolve, 300))
-		return selectSubtitleForVlc(retries_left-1)
 	}
+	logger.error(`selectSubtitleForVlc: could not select subtitle after ${maxRetries} attempts`)
+	return false
 }
 
 const addSubtitleToVLC = async (subtitlePath, maxRetries = 5) => {
@@ -210,6 +212,19 @@ if (appConfig.VLC_FINDER) {
 
 let youtubeUrlCache = new Map()
 const YOUTUBE_CACHE_TTL = 300000
+
+const cleanupYouTubeCache = () => {
+	const now = Date.now()
+	for (const [url, data] of youtubeUrlCache.entries()) {
+		if (now - data.timestamp > YOUTUBE_CACHE_TTL) {
+			youtubeUrlCache.delete(url)
+			logger.debug(`Cleaned up expired YouTube cache entry: ${url}`)
+		}
+	}
+}
+
+setInterval(cleanupYouTubeCache, 60000)
+
 const YOUTUBE_URLS = [
 	"https://www.youtube.com",
 	"https://youtube.com",
@@ -675,8 +690,8 @@ const sendVideoSyncMessage = async (message) => {
 }
 
 const handleVideoSyncMessage = async (message) => {
-	if (!isVLCwatching){
-		logger.warn(`isVLCwatching'${isVLCwatching}' proc_vlc'${proc_vlc}'(notincheck)`)
+	if (!isVLCwatching && !isInlineWatching){
+		logger.warn(`isVLCwatching'${isVLCwatching}' isInlineWatching'${isInlineWatching}'`)
 		return
 	}
 	const { type, requestId } = message
@@ -726,18 +741,76 @@ const handleVideoSyncMessage = async (message) => {
 					subtitle_exist: message.subtitle_exist || false 
 				})
 			}
+
+			if (isInlineWatching) {
+				const processedUrl = await checkVideoUrl(message.url)
+				const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+				mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+			} else if (isVLCwatching) {
+				try {
+					const currentUrl = await getVideoUrl_VLC()
+					let shouldUpdateVideo = false
+					
+					if (isYouTubeUrl(message.url)) {
+						const cachedUrls = youtubeUrlCache.get(message.url)
+						if (cachedUrls && cachedUrls.urls) {
+							shouldUpdateVideo = !cachedUrls.urls.includes(currentUrl)
+						} else {
+							shouldUpdateVideo = currentUrl !== message.url
+						}
+					} else {
+						shouldUpdateVideo = currentUrl !== message.url
+					}
+					
+					if (shouldUpdateVideo) {
+						await setVideoVLC(message.url)
+					}
+				} catch (error) {
+					await setVideoVLC(message.url)
+				}
+			}
 		}
 	}
 	else if (type === 'time_updated') {
 		logger.info("Server time updated:", message.time)
 		if (message.user !== USERID) {
 			isClientUpToDate = false
+
+			if (isInlineWatching) {
+				mainWindow.webContents.send('inline-video-sync-time', { time: message.time })
+			} else if (isVLCwatching) {
+				try {
+					const info = await getInfo()
+					const currentTime = Math.floor(parseFloat(info.data.length) * parseFloat(info.data.position))
+					
+					if (Math.abs(currentTime - message.time) > TIME_SYNC_TOLERANCE) {
+						await setTimeVLC(message.time)
+					}
+				} catch (error) {
+					logger.debug(`VLC not ready for time sync, will sync later: ${error}`)
+				}
+			}
 		}
 	}
 	else if (type === 'playing_updated') {
 		logger.info("Server playing state updated:", message.is_playing)
 		if (message.user !== USERID) {
 			isClientUpToDate = false
+
+			if (isInlineWatching) {
+				mainWindow.webContents.send('inline-video-sync-playing', { isPlaying: message.is_playing })
+			} else if (isVLCwatching) {
+				try {
+					const info = await getInfo()
+					const currentlyPlaying = info.data.state !== "paused"
+					
+					if (currentlyPlaying !== message.is_playing) {
+						await setPlayingVLC(message.is_playing)
+					}
+				} catch (error) {
+					logger.debug(`VLC not ready for playing state sync, will sync later: ${error}`)
+				}
+			}
 		}
 	}
 	else if (type === 'subtitle_updated') {
@@ -751,9 +824,8 @@ const handleVideoSyncMessage = async (message) => {
 			if (isVLCwatching) {
 				const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${message.filename}`)
 				fs.writeFileSync(tempPath, subtitleBuffer)
-				
-				const success = await addSubtitleToVLC(tempPath)
-				if (!success) {
+
+				if (!await addSubtitleToVLC(tempPath)) {
 					logger.warn("Failed to add subtitle to VLC after retries")
 				}
 				
@@ -835,10 +907,10 @@ const makeRequest_videoSync = async (type, data = {}) => {
 			
 			try {
 				const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
-				if (statusResult.data) {
-					await sendVideoSyncMessage({ type: "imuptodate" })
-					logger.debug("Marked as up to date after sync check")
-				}
+				// if (statusResult.data) {
+				// 	await sendVideoSyncMessage({ type: "imuptodate" })
+				// 	logger.debug("Marked as up to date after sync check")
+				// }
 			} catch (syncError) {
 				logger.warn("Failed to sync:", syncError.message)
 			}
@@ -1760,10 +1832,16 @@ const startVLCMonitoring = async () => {
 
 			if (!is_serverURLyoutube && videoVLC !== currentVideo) {
 				logger.debug("VLC video change detected")
+				await setTimeVLC(0)
+				currentTime = 0
+				lastSentTime = 0
 				const result = await makeRequest_videoSync("update_url", {"new_url": videoVLC})
-				if (result.status) {
+				if (result.status && result.data.status) {
 					currentVideo = videoVLC
-					// isClientUpToDate = true
+				} else {
+					logger.debug("video change error:", result)
+					isClientUpToDate = false
+					return
 				}
 			}
 			
@@ -1773,9 +1851,12 @@ const startVLCMonitoring = async () => {
 				}
 				logger.debug("VLC state change detected")
 				const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isplayingVLC, "new_time": timeVLC})
-				if (result.status) {
+				if (result.status && result.data.status) {
 					currentState = stateVLC
-					// isClientUpToDate = true
+				} else {
+					logger.debug("state change error:", result)
+					isClientUpToDate = false
+					return
 				}
 			}
 			
@@ -1785,10 +1866,14 @@ const startVLCMonitoring = async () => {
 				}
 				logger.debug(`VLC seek detected currentTime${currentTime} timeVLC${timeVLC}`)
 				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC})
-				if (result.status) {
+				logger.debug(result)
+				if (result.status && result.data.status) {
 					lastSentTime = timeVLC
 					currentTime = timeVLC
-					// isClientUpToDate = true
+				} else {
+					logger.debug("seek change error:", result)
+					isClientUpToDate = false
+					return
 				}
 			}
 			
@@ -1797,10 +1882,13 @@ const startVLCMonitoring = async () => {
 					return
 				}
 				logger.debug(`sending regular update, lastSentTime'${lastSentTime}' timeVLC'${timeVLC}'`)
-				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC})
-				if (result.status) {
+				const result = await makeRequest_videoSync("update_time", {"new_time": timeVLC, "timeout_pass": true})
+				if (result.status && result.data.status) {
 					lastSentTime = timeVLC
-					// isClientUpToDate = true
+				} else {
+					logger.debug("regular change error:", result)
+					isClientUpToDate = false
+					return
 				}
 			}
 
@@ -1931,7 +2019,7 @@ const requestSubtitle = async ()=>{
 }
 
 ipcMain.handle('request-subtitles', async (event) => {
-	await requestSubtitle()
+	return await requestSubtitle()
 })
 
 ipcMain.handle('get-update-info', async (event) => {

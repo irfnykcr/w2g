@@ -17,36 +17,6 @@ const loggerIndex = {
 	}
 }
 
-window.electronAPI.onVideoSyncStatus((data) => {
-	const toggleButton = document.getElementById("video-mode-toggle-button")
-	if (toggleButton) {
-		toggleButton.classList.remove("bg-gray-600", "bg-blue-600")
-		if (data.connected) {
-			toggleButton.classList.add("bg-blue-600")
-		} else {
-			toggleButton.classList.add("bg-gray-600")
-		}
-	}
-	
-	updateButtonVisibility(data.connected)
-})
-
-function updateButtonVisibility(isWatching) {
-	const setVideoContainer = document.querySelector("#set-thevideo")?.parentElement
-	const addSubtitleContainer = document.querySelector("#add-subtitle")?.parentElement
-	const watchVideoButton = document.getElementById("play-thevideo")
-	
-	if (isWatching) {
-		if (setVideoContainer) setVideoContainer.style.display = "flex"
-		if (addSubtitleContainer) addSubtitleContainer.style.display = "flex"
-		if (watchVideoButton) watchVideoButton.style.display = "none"
-	} else {
-		if (setVideoContainer) setVideoContainer.style.display = "none"
-		if (addSubtitleContainer) addSubtitleContainer.style.display = "none"
-		if (watchVideoButton) watchVideoButton.style.display = "block"
-	}
-}
-
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
@@ -83,7 +53,43 @@ document.addEventListener("DOMContentLoaded", () => {
 	})
 
 	const addSubtitleButton = document.querySelector("#add-subtitle")
+	const updateSubtitle = document.querySelector("#update-subtitle")
 	const subtitleFileInput = document.querySelector("#subtitle-file")
+
+	window.electronAPI.onVideoSyncStatus((data) => {
+		const toggleButton = document.getElementById("video-mode-toggle-button")
+		if (toggleButton) {
+			toggleButton.classList.remove("bg-gray-600", "bg-blue-600")
+			if (data.connected) {
+				toggleButton.classList.add("bg-blue-600")
+			} else {
+				toggleButton.classList.add("bg-gray-600")
+			}
+		}
+		
+		updateButtonVisibility(data.connected)
+	})
+
+	function updateButtonVisibility(isWatching) {
+		const setVideoContainer = document.querySelector("#set-thevideo")?.parentElement
+		const addSubtitleContainer = document.querySelector("#add-subtitle")?.parentElement
+		const watchVideoButton = document.getElementById("play-thevideo")
+		
+		if (isWatching) {
+			if (setVideoContainer) setVideoContainer.style.display = "flex"
+			if (addSubtitleContainer) addSubtitleContainer.style.display = "flex"
+			if (watchVideoButton) watchVideoButton.style.display = "none"
+		} else {
+			if (setVideoContainer) setVideoContainer.style.display = "none"
+			if (addSubtitleContainer) addSubtitleContainer.style.display = "none"
+			if (watchVideoButton) watchVideoButton.style.display = "block"
+		}
+	}
+
+	updateSubtitle.addEventListener("click", async ()=>{
+		const r = await window.electronAPI.requestSubtitles()
+		loggerIndex.info("requested subtitle:", r)
+	})
 
 	addSubtitleButton.addEventListener("click", () => {
 		subtitleFileInput.click()
@@ -112,8 +118,9 @@ document.addEventListener("DOMContentLoaded", () => {
 					addSubtitleButton.innerHTML = '<i class="fas fa-check"></i> Subtitle Available'
 					addSubtitleButton.classList.remove('bg-green-600', 'hover:bg-green-500')
 					addSubtitleButton.classList.add('bg-blue-600', 'hover:bg-blue-500')
+					updateSubtitle.classList.remove("hidden")
 					subtitleFileInput.value = ""
-				}, 2000)
+				}, 1000)
 			} else {
 				throw new Error(result.error || 'Failed to upload subtitle')
 			}
@@ -282,16 +289,17 @@ document.addEventListener("DOMContentLoaded", () => {
 		})
 
 		window.electronAPI.onSubtitleStatus((data) => {
-			const addSubtitleButton = document.querySelector("#add-subtitle")
 			if (addSubtitleButton) {
 				if (data.subtitle_exist) {
 					addSubtitleButton.innerHTML = '<i class="fas fa-check"></i> Subtitle Available'
 					addSubtitleButton.classList.remove('bg-gray-700', 'hover:bg-gray-600')
 					addSubtitleButton.classList.add('bg-blue-600', 'hover:bg-blue-500')
+					updateSubtitle.classList.remove("hidden")
 				} else {
 					addSubtitleButton.innerHTML = '<i class="fas fa-closed-captioning"></i> Add Subtitle'
 					addSubtitleButton.classList.remove('bg-blue-600', 'hover:bg-blue-500', 'bg-green-600', 'hover:bg-green-500')
 					addSubtitleButton.classList.add('bg-gray-700', 'hover:bg-gray-600')
+					updateSubtitle.classList.add("hidden")
 				}
 			}
 		})

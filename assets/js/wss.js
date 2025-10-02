@@ -609,7 +609,7 @@ function updateWatchersList(watchers) {
         const existingElements = watchersContainer.querySelectorAll('[data-watcher]')
         existingElements.forEach(el => el.remove())
         
-        watchersContainer.innerHTML = '<div class="text-gray-500 text-sm no-watchers-message">No one is watching</div>'
+        watchersContainer.innerHTML = '<div class="text-gray-500 text-sm no-watchers-message">No users connected</div>'
         return
     }
     
@@ -637,12 +637,24 @@ function updateWatchersList(watchers) {
             watcherElement.setAttribute('data-watcher', watcher.username)
         }
         
+        const isIdle = watcher.is_idle
         const syncStatus = watcher.is_uptodate
-        const newBorderClass = syncStatus ? `border-[${getUserColor(watcher.username)}]` : 'border-red-500'
-        const currentBorderClass = watcherElement.classList.contains(`border-[${getUserColor(watcher.username)}]`) ? `border-[${getUserColor(watcher.username)}]` : 'border-red-500'
+        
+        let newBorderClass
+        if (isIdle) {
+            newBorderClass = 'border-gray-500'
+        } else if (syncStatus) {
+            newBorderClass = `border-[${getUserColor(watcher.username)}]`
+        } else {
+            newBorderClass = 'border-red-500'
+        }
+        
+        const currentBorderClass = watcherElement.classList.contains('border-gray-500') ? 'border-gray-500' : 
+                                   watcherElement.classList.contains('border-red-500') ? 'border-red-500' : 
+                                   `border-[${getUserColor(watcher.username)}]`
         
         if (newBorderClass !== currentBorderClass) {
-            watcherElement.classList.remove(`border-[${getUserColor(watcher.username)}]`, 'border-red-500')
+            watcherElement.classList.remove('border-gray-500', 'border-red-500', `border-[${getUserColor(watcher.username)}]`)
             watcherElement.classList.add(newBorderClass)
         }
         
@@ -652,10 +664,10 @@ function updateWatchersList(watchers) {
             return `${mins}:${secs.toString().padStart(2, '0')}`
         }
         
-        const statusIcon = watcher.is_playing ? '▶️' : '⏸️'
-        const syncIcon = watcher.is_uptodate ? '✅' : '⚠️'
-        const formattedTime = formatTime(watcher.current_time || 0)
-        const syncText = watcher.is_uptodate ? 'Synced' : 'Behind'
+        const statusIcon = isIdle ? '💤' : (watcher.is_playing ? '▶️' : '⏸️')
+        const syncIcon = isIdle ? '' : (watcher.is_uptodate ? '✅' : '⚠️')
+        const formattedTime = isIdle ? 'Idle' : formatTime(watcher.current_time || 0)
+        // const syncText = isIdle ? '' : (watcher.is_uptodate ? 'Synced' : 'Behind')
         
         if (isNewElement) {
             let imageHtml = ''
@@ -696,14 +708,14 @@ function updateWatchersList(watchers) {
             const syncSpan = watcherElement.querySelector('.watcher-sync')
             
             if (statusSpan) {
-                const newStatusText = `${statusIcon} ${formattedTime}`
+                const newStatusText = isIdle ? `${statusIcon} ${formattedTime}` : `${statusIcon} ${formattedTime}`
                 if (statusSpan.textContent !== newStatusText) {
                     statusSpan.textContent = newStatusText
                 }
             }
             
             if (syncSpan) {
-                const newSyncText = `${syncIcon} ${syncText}`
+                const newSyncText = isIdle ? '' : `${syncIcon}`
                 if (syncSpan.textContent !== newSyncText) {
                     syncSpan.textContent = newSyncText
                 }
@@ -919,7 +931,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
 					if (vlcData && (vlcData.status === 'playing' || vlcData.status === 'paused')) {
 						isCurrentlyWatching = true
-						sendWatcherUpdate(true)
+						// const detailedInfo = getDetailedWatcherInfo()
+						sendWatcherUpdate(
+							true,
+							'',
+							vlcData.current_time || 0,
+							vlcData.isPlaying || false,
+							vlcData.is_uptodate || false
+						)
 						loggerWss.debug("Restored watcher status from existing VLC session")
 					}
 				}).catch(() => {
@@ -950,6 +969,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 			if (data.type == "room_info") {
 				if (chatRoomName) chatRoomName.innerHTML = `Chat - ${data.room_name}`
 				if (inputRoomName) inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
+				
+				if (!isCurrentlyWatching) {
+					sendWatcherUpdate(false)
+					loggerWss.info('Sent idle watcher status on connect')
+				}
 			} else if (data.type == "new_message") {
 				addMessage(data)
 			} else if (data.type == "new_reaction") {
@@ -1566,12 +1590,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const isClosed = data.status === 'closed' || data.status === 'error' || data.status === 'stopped'
 		
 		lastVLCData = data
-		// loggerWss.debug('VLC status received:', data)
 		
 		if (isClosed && isCurrentlyWatching) {
 			isCurrentlyWatching = false
 			sendWatcherUpdate(false)
-			loggerWss.info('VLC closed, removing from watchers')
+			loggerWss.info('VLC closed, user now idle')
 		} else if (isWatching !== isCurrentlyWatching) {
 			isCurrentlyWatching = isWatching
 			loggerWss.info('Watcher status changed to:', isWatching)

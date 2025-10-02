@@ -1,7 +1,7 @@
 import logging
 from traceback import print_exc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from asyncio import create_task, sleep
+# from asyncio import create_task, sleep
 from fastapi.middleware.cors import CORSMiddleware
 from json import loads, dumps
 from json import JSONDecodeError
@@ -13,7 +13,7 @@ from os import getenv
 load_dotenv()
 
 logging.basicConfig(
-	level=logging.INFO,
+	level=logging.DEBUG,
 	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
@@ -148,14 +148,14 @@ class ChatApp:
 		
 		self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
 		
-		if is_watching:
-			self.room_watchers[roomid].append({
-				"username": user,
-				"imageurl": user_imageurl,
-				"current_time": current_time,
-				"is_playing": is_playing,
-				"is_uptodate": is_uptodate
-			})
+		self.room_watchers[roomid].append({
+			"username": user,
+			"imageurl": user_imageurl,
+			"current_time": current_time,
+			"is_playing": is_playing,
+			"is_uptodate": is_uptodate,
+			"is_idle": not is_watching
+		})
 		
 		await self.send_watchers_to_room(roomid)
 
@@ -205,6 +205,21 @@ class ChatApp:
 				]
 		
 		self.active_rooms[roomid].append({"websocket": websocket, "username": user})
+		
+		if roomid not in self.room_watchers:
+			self.room_watchers[roomid] = []
+		
+		user_already_in_watchers = any(w["username"] == user for w in self.room_watchers[roomid])
+		if not user_already_in_watchers:
+			self.room_watchers[roomid].append({
+				"username": user,
+				"imageurl": "",
+				"current_time": 0,
+				"is_playing": False,
+				"is_uptodate": False,
+				"is_idle": True
+			})
+		
 		if lastMessageDate > 0:
 			await self.send_history_to_websocket(websocket, roomid, lastMessageDate)
 		else:
@@ -234,6 +249,8 @@ class ChatApp:
 				del self.room_watchers[roomid]
 		else:
 			await self.send_watchers_to_room(roomid)
+		
+		logger.info(f"disconnected: user`{user}` roomid`{roomid}`")
 
 	async def handle_message(self, websocket: WebSocket, data):
 		if data.get("type") == "watcher_update":
@@ -655,9 +672,6 @@ class ChatApp:
 				try:
 					if websocket.client_state.value == 1:  # CONNECTED state
 						await websocket.send_text(dumps(data))
-					else:
-						logger.error(f"send_message_to_room: Error sending message to {user_data['username']}. websocket.client_state.value'{websocket.client_state.value}'")
-
 				except:
 					print_exc()
 					logger.error(f"send_message_to_room: Error sending message to {user_data['username']}")
@@ -698,11 +712,12 @@ async def websocket_endpoint(
 	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")
 	
 	try:
-		await websocket.send_text(dumps({
-			"type": "room_info",
-			"room_name": room_name,
-			"message": f"Connected to room: {room_name}"
-		}))
+		if websocket.client_state.value == 1:
+			await websocket.send_text(dumps({
+				"type": "room_info",
+				"room_name": room_name,
+				"message": f"Connected to room: {room_name}"
+			}))
 	except:
 		print_exc()
 
@@ -725,12 +740,18 @@ async def websocket_endpoint(
 					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
-					await chat.send_message_to_websocket(websocket, "Invalid message format")
+					try:
+						if websocket.client_state.value == 1:
+							await chat.send_message_to_websocket(websocket, "Invalid message format")
+					except:
+						print_exc()
 				except:
+					logger.error(f"Error handling message from {user}")
 					print_exc()
 			except WebSocketDisconnect:
 				break
 			except:
+				logger.error(f"WebSocket error for {user}")
 				print_exc()
 				break
 		await chat.handle_disconnect(websocket)

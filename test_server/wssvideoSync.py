@@ -12,10 +12,11 @@ import sys
 from atexit import register
 from base64 import b64decode, b64encode
 import logging
+from datetime import datetime, timedelta
 load_dotenv()
 
 logging.basicConfig(
-	level=logging.INFO,
+	level=logging.DEBUG,
 	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
@@ -89,6 +90,8 @@ def subtitle_exists(roomid):
 
 
 PLAYER_STATUS = {}
+USER_TIMEOUTS:dict[str, dict[str,datetime]] = {} # user: {act: date}
+TIMEOUT_SECS = 2
 
 def get_db_connection():
 	try:
@@ -185,12 +188,40 @@ def change_updatestatus_forall(roomid: str, except_user: str) -> bool:
 	update_player_status(roomid, uptodate=uptodate)
 	return True
 
-def check_ifcan_update(roomid: str, user: str) -> bool:
+def check_ifcan_update(roomid: str, user: str, act:None|str=None, timeout_pass=False) -> bool:
+	logger.debug(f"{user}, {act}, {timeout_pass}")
+	# user is up to date
 	player_status = get_player_status(roomid)
 	if not player_status or "uptodate" not in player_status:
 		return False
 	uptodate = player_status["uptodate"]
-	return uptodate.get(user, False)
+	r1 = uptodate.get(user, False)
+	if not r1:
+		logger.debug(f"{user} not uptodate")
+		return False
+	# user has no timeout
+	if timeout_pass:
+		logger.debug(f"{user} has timeout_pass")
+		return True
+	r2 = True
+	now = datetime.now()
+	if act:
+		global USER_TIMEOUTS
+		user_acts = USER_TIMEOUTS.get(user, None)
+		if not user_acts:
+			logger.debug(f"{user} first timeout added, gave green")
+			USER_TIMEOUTS[user] = {act: now}
+			return True
+		the_act_date = user_acts.get(act, None)
+		if the_act_date:
+			global TIMEOUT_SECS
+			r2 = (now - the_act_date) > timedelta(seconds=TIMEOUT_SECS)
+		if r2:
+			logger.debug(f"{user} added timeout")
+			USER_TIMEOUTS[user][act] = now
+		logger.debug(f"{r2}, {USER_TIMEOUTS}")
+	return r2
+	
 
 def save_player_status_to_db():
 	global PLAYER_STATUS
@@ -300,8 +331,10 @@ class VideoSyncApp:
 			for user_data in self.active_connections[roomid]:
 				if exclude_user and user_data["user"] == exclude_user:
 					continue
+				websocket = user_data["websocket"]
 				try:
-					await user_data["websocket"].send_text(dumps(message))
+					if websocket.client_state.value == 1:
+						await websocket.send_text(dumps(message))
 				except:
 					print_exc()
 					logger.error(f"broadcast_to_room: Error sending to {user_data['user']}")
@@ -341,26 +374,31 @@ class VideoSyncApp:
 		has_subtitle = subtitle_exists(roomid)
 		update_player_status(roomid, uptodate=uptodate, subtitle_exist={"user": "", "value": has_subtitle})
 		
-		await websocket.send_text(dumps({
-			"type": "initial_state",
-			"url": player_status.get("url", {}).get("value", ""),
-			"time": player_status.get("time", {}).get("value", 0),
-			"is_playing": player_status.get("is_playing", {}).get("value", False),
-			"url_user": player_status.get("url", {}).get("user", ""),
-			"time_user": player_status.get("time", {}).get("user", ""),
-			"playing_user": player_status.get("is_playing", {}).get("user", ""),
-			"subtitle_exist": has_subtitle
-		}))
-		
-		if has_subtitle:
-			subtitle_data = load_subtitle(roomid)
-			if subtitle_data:
+		try:
+			if websocket.client_state.value == 1:
 				await websocket.send_text(dumps({
-					"type": "subtitle_updated",
-					"user": "server",
-					"filename": f"{roomid}.vtt",
-					"subtitle_data": subtitle_data
+					"type": "initial_state",
+					"url": player_status.get("url", {}).get("value", ""),
+					"time": player_status.get("time", {}).get("value", 0),
+					"is_playing": player_status.get("is_playing", {}).get("value", False),
+					"url_user": player_status.get("url", {}).get("user", ""),
+					"time_user": player_status.get("time", {}).get("user", ""),
+					"playing_user": player_status.get("is_playing", {}).get("user", ""),
+					"subtitle_exist": has_subtitle
 				}))
+				
+				if has_subtitle:
+					subtitle_data = load_subtitle(roomid)
+					if subtitle_data:
+						await websocket.send_text(dumps({
+							"type": "subtitle_updated",
+							"user": "server",
+							"filename": f"{roomid}.vtt",
+							"subtitle_data": subtitle_data
+						}))
+		except:
+			print_exc()
+			logger.error(f"Error sending initial state to {user}")
 
 	async def handle_disconnect(self, websocket: WebSocket):
 		roomid = self.get_room_from_websocket(websocket)
@@ -404,7 +442,7 @@ class VideoSyncApp:
 			
 		elif message_type == "update_url":
 			new_url = data.get("new_url")
-			if check_ifcan_update(roomid, user):
+			if check_ifcan_update(roomid, user, "update_url"):
 				time_data = {"user": user, "value": 0}
 				is_playing_data = {"user": user, "value": True}
 				url_data = {"user": user, "value": new_url}
@@ -439,7 +477,8 @@ class VideoSyncApp:
 				
 		elif message_type == "update_time":
 			new_time = data.get("new_time")
-			if check_ifcan_update(roomid, user):
+			timeout_pass = data.get("timeout_pass", False)
+			if check_ifcan_update(roomid, user, "update_time", timeout_pass):
 				time_data = {"user": user, "value": new_time}
 				update_player_status(roomid, time=time_data)
 				change_updatestatus_forall(roomid, user)
@@ -468,7 +507,7 @@ class VideoSyncApp:
 		elif message_type == "update_isplaying":
 			is_playing = data.get("is_playing")
 			new_time = data.get("new_time")
-			if check_ifcan_update(roomid, user):
+			if check_ifcan_update(roomid, user, "update_isplaying"):
 				is_playing_data = {"user": user, "value": is_playing}
 				time_data = {"user": user, "value": new_time}
 				
@@ -501,7 +540,7 @@ class VideoSyncApp:
 			subtitle_data = data.get("subtitle_data")
 			filename = data.get("filename", "subtitle.vtt")
 			
-			if check_ifcan_update(roomid, user):
+			if check_ifcan_update(roomid, user, "update_subtitle"):
 				if save_subtitle(roomid, subtitle_data, filename):
 					update_player_status(roomid, subtitle_exist={"user": user, "value": True})
 					change_updatestatus_forall(roomid, user)
@@ -608,16 +647,19 @@ async def websocket_endpoint(
 					message_data = loads(data)
 					await video_sync.handle_message(websocket, message_data)
 				except JSONDecodeError:
-					await websocket.send_text(dumps({
-						"type": "error",
-						"message": "Invalid message format"
-					}))
+					if websocket.client_state.value == 1:
+						await websocket.send_text(dumps({
+							"type": "error",
+							"message": "Invalid message format"
+						}))
 				except:
 					print_exc()
+					logger.error(f"{user} Error handling video sync message")
 			except WebSocketDisconnect:
 				break
 			except:
 				print_exc()
+				logger.error(f"{user} WebSocket receive error")
 				break
 		await video_sync.handle_disconnect(websocket)
 	except WebSocketDisconnect:
