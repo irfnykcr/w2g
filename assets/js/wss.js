@@ -149,25 +149,25 @@ function chatStatus(status) {
 }
 
 
-function getUserImageUrl() {
-	const messages = Array.from(messagesById.values())
-	const userMessages = messages.filter(msg => {
-		const userSpan = msg.querySelector('span.font-semibold')
-		return userSpan && !userSpan.classList.contains('text-admin')
-	})
+// function getUserImageUrl() {
+// 	const messages = Array.from(messagesById.values())
+// 	const userMessages = messages.filter(msg => {
+// 		const userSpan = msg.querySelector('span.font-semibold')
+// 		return userSpan && !userSpan.classList.contains('text-admin')
+// 	})
 	
-	for (let i = userMessages.length - 1; i >= 0; i--) {
-		const messageContent = userMessages[i].querySelector('div:last-child')
-		if (messageContent) {
-			const gifImg = messageContent.querySelector('img[src*="tenor.com"]')
-			if (gifImg) {
-				return gifImg.src
-			}
-		}
-	}
+// 	for (let i = userMessages.length - 1; i >= 0; i--) {
+// 		const messageContent = userMessages[i].querySelector('div:last-child')
+// 		if (messageContent) {
+// 			const gifImg = messageContent.querySelector('img[src*="tenor.com"]')
+// 			if (gifImg) {
+// 				return gifImg.src
+// 			}
+// 		}
+// 	}
 	
-	return ''
-}
+// 	return ''
+// }
 
 function initializeReplySystem() {
     const closeReplyBtn = document.getElementById('close-reply')
@@ -621,7 +621,7 @@ function updateWatchersList(watchers) {
     const processedWatchers = new Set()
     
     watchers.forEach(watcher => {
-        processedWatchers.add(watcher.username)
+		processedWatchers.add(watcher.username)
         
         const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
         if (noWatchersMsg) {
@@ -673,21 +673,21 @@ function updateWatchersList(watchers) {
             let imageHtml = ''
             if (watcher.imageurl) {
                 imageHtml = `
-                <img 
-                    src="${watcher.imageurl}" 
-                    alt="${watcher.username}" 
-                    class="w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
-                    onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
-                />
-                <div class="w-6 h-6 rounded-full bg-gray-600 items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback" style="display: none;">
-                    ${watcher.username.charAt(0).toUpperCase()}
-                </div>
+					<img 
+						src="${watcher.imageurl}" 
+						alt="${watcher.username}" 
+						class="w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
+						onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+					/>
+					<div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
+						${watcher.username.charAt(0).toUpperCase()}
+					</div>
                 `
             } else {
                 imageHtml = `
-                <div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
-                    ${watcher.username.charAt(0).toUpperCase()}
-                </div>
+					<div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
+						${watcher.username.charAt(0).toUpperCase()}
+					</div>
                 `
             }
 
@@ -721,11 +721,26 @@ function updateWatchersList(watchers) {
                 }
             }
             
-            const watcherImage = watcherElement.querySelector('.watcher-image')
-            
-            if (watcher.imageurl && watcherImage && watcherImage.src !== watcher.imageurl) {
-                watcherImage.src = watcher.imageurl
-            }
+           let watcherImage = watcherElement.querySelector('.watcher-image')
+			const watcherfallback = watcherElement.querySelector(".watcher-fallback")
+			if (watcher.imageurl) {
+				if (!watcherImage) {
+					watcherImage = document.createElement('img')
+					watcherImage.className = 'w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image'
+					watcherImage.onerror = function() {
+						this.style.display = 'none'
+						if (this.nextElementSibling) this.nextElementSibling.style.display = 'flex'
+					}
+					if (watcherfallback) {
+						watcherElement.insertBefore(watcherImage, watcherfallback)
+					}
+				}
+				if (watcherfallback) {
+					watcherfallback.classList = "hidden"
+				}
+				watcherImage.src = watcher.imageurl
+				watcherImage.classList = "w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
+			}
         }
     })
     
@@ -742,14 +757,11 @@ function updateWatchersList(watchers) {
     })
 }
 
-function sendWatcherUpdate(isWatching, imageurl = '', currentTime = 0, isPlaying = false, isUptodate = false) {
+function sendWatcherUpdate(isWatching, currentTime = 0, isPlaying = false, isUptodate = false) {
     if (wss && wss.readyState === WebSocket.OPEN) {
-        const finalImageUrl = imageurl || getUserImageUrl()
-        
         const data = {
             type: 'watcher_update',
             is_watching: isWatching,
-            imageurl: finalImageUrl,
             current_time: currentTime,
             is_playing: isPlaying,
             is_uptodate: isUptodate
@@ -931,10 +943,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
 					if (vlcData && (vlcData.status === 'playing' || vlcData.status === 'paused')) {
 						isCurrentlyWatching = true
-						// const detailedInfo = getDetailedWatcherInfo()
 						sendWatcherUpdate(
 							true,
-							'',
 							vlcData.current_time || 0,
 							vlcData.isPlaying || false,
 							vlcData.is_uptodate || false
@@ -1602,8 +1612,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			if (isWatching) {
 				const detailedInfo = await getDetailedWatcherInfo()
 				sendWatcherUpdate(
-					true, 
-					'', 
+					true,
 					detailedInfo.current_time,
 					data.isPlaying || false,
 					detailedInfo.is_uptodate
@@ -1616,8 +1625,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		} else if (isWatching) {
 			const detailedInfo = await getDetailedWatcherInfo()
 			sendWatcherUpdate(
-				true, 
-				'', 
+				true,
 				detailedInfo.current_time,
 				data.isPlaying || false,
 				detailedInfo.is_uptodate
@@ -1631,8 +1639,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			setTimeout(async () => {
 				const detailedInfo = await getDetailedWatcherInfo()
 				sendWatcherUpdate(
-					true, 
-					'', 
+					true,
 					detailedInfo.current_time,
 					detailedInfo.is_playing,
 					detailedInfo.is_uptodate
@@ -1648,8 +1655,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		if (isCurrentlyWatching && lastVLCData && lastVLCData.status !== 'closed' && lastVLCData.status !== 'error' && lastVLCData.status !== 'stopped') {
 			const detailedInfo = await getDetailedWatcherInfo()
 			sendWatcherUpdate(
-				true, 
-				'', 
+				true,
 				detailedInfo.current_time,
 				lastVLCData.isPlaying || false,
 				detailedInfo.is_uptodate

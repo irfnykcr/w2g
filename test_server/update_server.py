@@ -8,7 +8,15 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 from os import getenv
+import logging
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger("update_server")
 
 PASSWORD_HASH = getenv("VERSION_UPLOAD_PASSWORD_HASH")
 SERVER = getenv("UPDATES_SERVER")
@@ -48,28 +56,40 @@ def remove_old_versions(os_type):
                 file_path.unlink()
 
 @app.get("/latest-linux.yml")
-def get_latest_linux():
+def get_latest_linux(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Version check from {client_ip}: Linux latest.yml requested")
+    
     yml_file = updates_dir / "downloads" / "linux" / "latest.yml"
     if yml_file.exists():
         return FileResponse(yml_file, media_type="text/yaml")
     raise HTTPException(status_code=404, detail="No version available")
 
 @app.get("/latest-mac.yml")
-def get_latest_mac():
+def get_latest_mac(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Version check from {client_ip}: macOS latest.yml requested")
+    
     yml_file = updates_dir / "downloads" / "darwin" / "latest.yml"
     if yml_file.exists():
         return FileResponse(yml_file, media_type="text/yaml")
     raise HTTPException(status_code=404, detail="No version available")
 
 @app.get("/latest.yml")
-def get_latest_windows():
+def get_latest_windows(request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Version check from {client_ip}: Windows latest.yml requested")
+    
     yml_file = updates_dir / "downloads" / "windows" / "latest.yml"
     if yml_file.exists():
         return FileResponse(yml_file, media_type="text/yaml")
     raise HTTPException(status_code=404, detail="No version available")
 
 @app.get("/downloads/{filename}")
-def download(filename: str):
+def download(filename: str, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Download request from {client_ip}: {filename}")
+    
     print(f"got request for: {filename}")
     for os_type in ["linux", "darwin", "windows"]:
         file_path = updates_dir / "downloads" / os_type / filename
@@ -99,6 +119,7 @@ def download(filename: str):
 
 @app.post("/upload/start")
 def start_upload(
+    request: Request,
     filename: str = Form(...),
     total_size: int = Form(...),
     version: str = Form(...),
@@ -106,6 +127,9 @@ def start_upload(
     sha512: str = Form(...),
     password: str = Form("")
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"Upload start from {client_ip}: {filename} v{version} ({total_size} bytes)")
+    
     if not verify_password(password):
         raise HTTPException(status_code=401, detail="Invalid password")
     
@@ -136,6 +160,8 @@ async def upload_chunk(
     request: Request,
     password: str = Query(...)
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    
     if not verify_password(password):
         raise HTTPException(status_code=401, detail="Invalid password")
     upload_info_file = updates_dir / "temp" / f"{upload_id}.json"
@@ -154,6 +180,8 @@ async def upload_chunk(
     current_size = upload_path.stat().st_size if upload_path.exists() else 0
     progress = (current_size / upload_info["total_size"]) * 100
     
+    logger.info(f"Upload chunk from {client_ip}: {upload_info['filename']} chunk {chunk_number} - {progress:.1f}% ({current_size}/{upload_info['total_size']} bytes)")
+    
     return {
         "chunk": chunk_number,
         "progress": round(progress, 2),
@@ -162,7 +190,9 @@ async def upload_chunk(
     }
 
 @app.post("/upload/complete")
-def complete_upload(upload_id: str = Form(...), os_type: str = Form(...), password: str = Form("")):
+def complete_upload(request: Request, upload_id: str = Form(...), os_type: str = Form(...), password: str = Form("")):
+    client_ip = request.client.host if request.client else "unknown"
+    
     if not verify_password(password):
         raise HTTPException(status_code=401, detail="Invalid password")
     upload_info_file = updates_dir / "temp" / f"{upload_id}.json"
@@ -207,5 +237,7 @@ releaseDate: '{datetime.now().isoformat()}Z'"""
     (os_dir / "latest.yml").write_text(yml_content)
     
     upload_info_file.unlink()
+    
+    logger.info(f"Upload completed from {client_ip}: {upload_info['filename']} v{upload_info['version']} ({size} bytes) for {os_type}")
     
     return {"version": upload_info["version"], "file": upload_info["filename"]}

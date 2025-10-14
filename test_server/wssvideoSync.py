@@ -91,7 +91,7 @@ def subtitle_exists(roomid):
 
 PLAYER_STATUS = {}
 USER_TIMEOUTS:dict[str, dict[str,datetime]] = {} # user: {act: date}
-TIMEOUT_SECS = 2
+TIMEOUT_SECS = 1
 
 def get_db_connection():
 	try:

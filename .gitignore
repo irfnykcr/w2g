@@ -22,3 +22,6 @@ __pycache__
 debug_creds.js
 
 .github
+windows-build.sh
+windows-upload.sh
+yarn.lock
