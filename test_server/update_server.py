@@ -209,6 +209,7 @@ def complete_upload(request: Request, upload_id: str = Form(...), os_type: str =
     remove_old_versions(os_type)
     
     os_dir = updates_dir / "downloads" / os_type
+    os_dir.mkdir(parents=True, exist_ok=True)
     final_path = os_dir / upload_info["filename"]
     shutil.move(str(temp_path), str(final_path))
     

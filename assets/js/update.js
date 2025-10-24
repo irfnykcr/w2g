@@ -89,7 +89,7 @@ document.addEventListener("DOMContentLoaded", ()=>{
 		isDownloading = false
 		isDownloaded = true
 		hideProgress()
-		showStatus('Update downloaded successfully! Installing and restarting...', 'success')
+		showStatus('Update downloaded successfully! Installing...', 'success')
 		
 		setTimeout(async () => {
 			await window.electronAPI.installUpdate()

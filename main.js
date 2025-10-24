@@ -3,19 +3,16 @@ const axios = require('axios')
 const path = require('node:path')
 const { spawn } = require('child_process')
 const fs = require('fs')
-const keytar = require('keytar')
+const secureStorage = require('./secureStorage.js')
 const { Menu } = require('electron')
 const { create: createYoutubeDl } = require('youtube-dl-exec')
 const WebSocket = require('ws')
-const UpdateManager = require('./updateManager')
+const UpdateManager = require('./updateManager.js')
 const os = require('os')
 
 // const bcrypt = require('bcryptjs')
 // console.log(bcrypt.hashSync("123", 10))
 // process.exit()
-
-// keytar.deletePassword("turkuazz","user")
-// keytar.deletePassword("turkuazz","userpsw")
 
 const logger = {
 	info: (...args) => {
@@ -267,14 +264,14 @@ ipcMain.handle('check-room', async (event, room, roompsw) => {
 ipcMain.handle('get-room', async (event) => {
 	if (!ROOMID){
 		try{
-			ROOMID = await keytar.getPassword("turkuazz", "roomid")
+			ROOMID = await secureStorage.getPassword("turkuazz", "roomid")
 			if (ROOMID === null) {return false}
 		} catch {
 			return false
 		}
 	}
 	try{
-		_roompsw = await keytar.getPassword("turkuazz", "roompsw")
+		_roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
 		if (_roompsw === null) {return false}
 	} catch {
 		return false
@@ -287,14 +284,14 @@ ipcMain.handle('get-room', async (event) => {
 ipcMain.handle('set-roomcreds', async (event, roomid, roompsw) => {
 	if (!await checkRoom(roomid, roompsw)) { return false }
 	ROOMID = roomid
-	await keytar.setPassword('turkuazz', "roomid", roomid)
-	await keytar.setPassword('turkuazz', "roompsw", roompsw)
+	await secureStorage.setPassword('turkuazz', "roomid", roomid)
+	await secureStorage.setPassword('turkuazz', "roompsw", roompsw)
 	return true
 })
 ipcMain.handle('left-room', async (event) => {
 	await abortVLC()
-	await keytar.deletePassword('turkuazz', "roomid")
-	await keytar.deletePassword('turkuazz', "roompsw")
+	await secureStorage.deletePassword('turkuazz', "roomid")
+	await secureStorage.deletePassword('turkuazz', "roompsw")
 	return true
 })
 
@@ -316,14 +313,14 @@ ipcMain.handle('check-user', async (event, user, userpsw) => {
 ipcMain.handle('get-user', async (event) => {
 	if (!USERID){
 		try{
-			USERID = await keytar.getPassword("turkuazz", "user")
+			USERID = await secureStorage.getPassword("turkuazz", "user")
 			if (USERID === null) {return false}
 		} catch {
 			return false
 		}
 	}
 	try{
-		_userpsw = await keytar.getPassword("turkuazz", "userpsw")
+		_userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
 		if (_userpsw === null) {return false}
 	} catch {
 		return false
@@ -337,18 +334,18 @@ ipcMain.handle('get-user', async (event) => {
 ipcMain.handle('set-usercreds', async (event, user, userpsw) => {
 	if (!await checkUser(user, userpsw)) { return false }
 	USERID = user
-	await keytar.setPassword("turkuazz", "user", user)
-	await keytar.setPassword("turkuazz", "userpsw", userpsw)
+	await secureStorage.setPassword("turkuazz", "user", user)
+	await secureStorage.setPassword("turkuazz", "userpsw", userpsw)
 	return true
 })
 ipcMain.handle('logout-user', async (event) => {
 	await abortVLC()
 	USERID = null
 	ROOMID = null
-	await keytar.deletePassword('turkuazz', "roomid")
-	await keytar.deletePassword('turkuazz', "roompsw")
-	await keytar.deletePassword('turkuazz', "user")
-	await keytar.deletePassword('turkuazz', "userpsw")
+	await secureStorage.deletePassword('turkuazz', "roomid")
+	await secureStorage.deletePassword('turkuazz', "roompsw")
+	await secureStorage.deletePassword('turkuazz', "user")
+	await secureStorage.deletePassword('turkuazz', "userpsw")
 	return true
 })
 
@@ -577,8 +574,8 @@ const connectVideoSyncWS = async () => {
 	}
 	
 	try {
-		const userpsw = await keytar.getPassword("turkuazz", "userpsw")
-		const roompsw = await keytar.getPassword("turkuazz", "roompsw")
+		const userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
+		const roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
 		
 		const wsUrl = `wss://${SERVER_ENDPOINT}/videosync/?user=${encodeURIComponent(USERID)}&psw=${encodeURIComponent(userpsw)}&roomid=${encodeURIComponent(ROOMID)}&roompsw=${encodeURIComponent(roompsw)}`
 		
@@ -871,9 +868,9 @@ const makeRequest_server = async (url, json) => {
 		return {status: false, message:`useridid, roomid, ${USERID}, ${ROOMID}`}
 	}
 	json.userid = USERID
-	json.userpsw = await keytar.getPassword("turkuazz", "userpsw")
+	json.userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
 	json.roomid = ROOMID
-	json.roompsw = await keytar.getPassword("turkuazz", "roompsw")
+	json.roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
 	try{
 		const r = await axios.post(
 			`https://${SERVER_ENDPOINT}${url}`,

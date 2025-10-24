@@ -47,9 +47,9 @@
 						await window.electronAPI.gotoRoomJoin()
 						return true
 					} else {
-						usernameEl.style.disabled = false
-						passwordEl.style.disabled = false
-						sendLoginEl.style.disabled = false
+						usernameEl.disabled = false
+						passwordEl.disabled = false
+						sendLoginEl.disabled = false
 						console.log("login failed.")
 						return false
 					}

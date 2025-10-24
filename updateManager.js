@@ -107,7 +107,7 @@ class UpdateManager {
 
 	async installUpdate() {
 		try {
-			autoUpdater.quitAndInstall(true, true)
+			autoUpdater.quitAndInstall(true, false)
 		} catch (error) {
 			this.logger.error('Failed to install update:', error.message)
 			return false
