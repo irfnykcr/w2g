@@ -71,16 +71,16 @@ document.addEventListener("DOMContentLoaded", () => {
 	})
 
 	function updateButtonVisibility(isWatching) {
-		const setVideoContainer = document.querySelector("#set-thevideo")?.parentElement
+		// const setVideoContainer = document.querySelector("#set-thevideo")?.parentElement
 		const addSubtitleContainer = document.querySelector("#add-subtitle")?.parentElement
 		const watchVideoButton = document.getElementById("play-thevideo")
 		
 		if (isWatching) {
-			if (setVideoContainer) setVideoContainer.style.display = "flex"
+			// if (setVideoContainer) setVideoContainer.style.display = "flex"
 			if (addSubtitleContainer) addSubtitleContainer.style.display = "flex"
 			if (watchVideoButton) watchVideoButton.style.display = "none"
 		} else {
-			if (setVideoContainer) setVideoContainer.style.display = "none"
+			// if (setVideoContainer) setVideoContainer.style.display = "none"
 			if (addSubtitleContainer) addSubtitleContainer.style.display = "none"
 			if (watchVideoButton) watchVideoButton.style.display = "block"
 		}

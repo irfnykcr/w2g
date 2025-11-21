@@ -1127,7 +1127,23 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		subtitleCache.clear()
 		logger.info("Cleared subtitle cache - new video set")
 		
-		const result = await makeRequest_videoSync("update_url", {"new_url": url})
+		let result = { status: false }
+		if (videoSyncWS && videoSyncWS.readyState === WebSocket.OPEN) {
+			result = await makeRequest_videoSync("update_url", {"new_url": url})
+		} else {
+			result = await axios.post(
+				`https://${SERVER_ENDPOINT}/setvideourl_offline`,
+				{
+					user: USERID,
+					psw: await secureStorage.getPassword("turkuazz", "userpsw"),
+					room: ROOMID,
+					roompsw: await secureStorage.getPassword("turkuazz", "roompsw"),
+					new_url: url
+				}
+			).then(async (r)=>{
+				return r.data
+			})
+		}
 		
 		if (result.status) {
 			await setVideoVLC(url)

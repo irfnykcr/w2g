@@ -1,2 +1,2 @@
 #!/bin/bash
-uvicorn wsschat:app --host 0.0.0.0 --port 8086 --workers 1 --log-level info --ssl-keyfile "/etc/letsencrypt/live/turkuazz.vip/privkey.pem" --ssl-certfile "/etc/letsencrypt/live/turkuazz.vip/fullchain.pem" --timeout-keep-alive 600 --ws-ping-interval 30 --ws-ping-timeout 120
+uvicorn wsschat:app --host 0.0.0.0 --port 8086 --workers 1 --log-level info --ssl-keyfile "/etc/letsencrypt/live/turkuazz.vip/privkey.pem" --ssl-certfile "/etc/letsencrypt/live/turkuazz.vip/fullchain.pem" --timeout-keep-alive 900 --ws websockets --ws-ping-interval 20 --ws-ping-timeout 60

@@ -619,6 +619,9 @@ async def websocket_endpoint(
 	roomid: str = Query(...),
 	roompsw: str = Query(...),
 ):
+
+	await websocket.accept()
+
 	if not (user and psw and roomid and roompsw):
 		logger.error("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
@@ -633,8 +636,6 @@ async def websocket_endpoint(
 		logger.error("Invalid room credentials")
 		await websocket.close(code=1008, reason="Invalid room credentials")
 		return
-
-	await websocket.accept()
 	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")
 	
 	try:
@@ -683,3 +684,40 @@ async def login_room(request: Request):
 	psw = str(data["psw"])
 	logger.info(f"login_room: room`{room}`")
 	return {"status": checkRoom(room, psw)}
+
+@app.post('/setvideourl_offline')
+async def setvideourl_offline(request: Request):
+	data = await request.json()
+	user = str(data.get("user", "") or "")
+	userpsw = str(data.get("psw", "") or "")
+	room = str(data.get("room", "") or "")
+	roompsw = str(data.get("roompsw", "") or data.get("room_psw", "") or "")
+	new_url = str(data.get("new_url", "") or "")
+	logger.info(f"setvideourl_offline: user`{user}` room`{room}` new_url`{new_url}`")
+	if not (user and userpsw and room and roompsw and new_url):
+		return {"status": False, "error": "Missing required parameters"}
+	if not checkUser(user, userpsw):
+		logger.error(f"setvideourl_offline: Invalid user credentials for user`{user}`")
+		return {"status": False, "error": "Invalid user credentials"}
+	if not checkRoom(room, roompsw):
+		logger.error(f"setvideourl_offline: Invalid room credentials for room`{room}`")
+		return {"status": False, "error": "Invalid room credentials"}
+	player_status = get_player_status(room)
+	time_data = {"user": user, "value": 0}
+	is_playing_data = {"user": user, "value": True}
+	url_data = {"user": user, "value": new_url}
+	subtitle_exist_data = {"user": "", "value": False}
+	update_player_status(room, time=time_data, is_playing=is_playing_data, url=url_data, subtitle_exist=subtitle_exist_data)
+	uptodate = player_status.get("uptodate", {})
+	for key in list(uptodate.keys()):
+		uptodate[key] = False
+	update_player_status(room, uptodate=uptodate)
+	await video_sync.broadcast_to_room(room, {
+		"type": "url_updated",
+		"url": new_url,
+		"user": user,
+		"time": 0,
+		"is_playing": True,
+		"subtitle_exist": False
+	})
+	return {"status": True}

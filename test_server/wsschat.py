@@ -1,7 +1,8 @@
 import logging
 from traceback import print_exc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-# from asyncio import create_task, sleep
+from asyncio import create_task, sleep, CancelledError
+from starlette.websockets import WebSocketState
 from fastapi.middleware.cors import CORSMiddleware
 from json import loads, dumps
 from json import JSONDecodeError
@@ -95,6 +96,94 @@ class ChatApp:
 		self.active_rooms = {}
 		# {roomid: [{"username": username, "imageurl": imageurl}]}
 		self.room_watchers = {}
+		self.disconnect_tasks = {}
+		self.presence_grace_seconds = 5
+		self.keepalive_tasks = {}
+		self.last_pong = {}
+		self.keepalive_interval = 30
+		self.keepalive_timeout = 90
+		self.user_image_cache = {}
+
+	def _disconnect_key(self, roomid, user):
+		return f"{roomid}:{user}"
+
+	def cancel_pending_disconnect(self, roomid, user):
+		key = self._disconnect_key(roomid, user)
+		task = self.disconnect_tasks.pop(key, None)
+		if task and not task.done():
+			task.cancel()
+			return True
+		return False
+
+	def schedule_disconnect_notice(self, roomid, user):
+		key = self._disconnect_key(roomid, user)
+		if key in self.disconnect_tasks:
+			task = self.disconnect_tasks.pop(key)
+			if task and not task.done():
+				task.cancel()
+		self.disconnect_tasks[key] = create_task(self._delayed_disconnect_notice(roomid, user))
+
+	def start_keepalive(self, websocket):
+		self.last_pong[websocket] = time()
+		self.keepalive_tasks[websocket] = create_task(self._keepalive_loop(websocket))
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		logger.debug(f"keepalive started: user`{user}` roomid`{roomid}`")
+
+	def stop_keepalive(self, websocket):
+		task = self.keepalive_tasks.pop(websocket, None)
+		if task and not task.done():
+			task.cancel()
+		self.last_pong.pop(websocket, None)
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		logger.debug(f"keepalive stopped: user`{user}` roomid`{roomid}`")
+
+	async def _keepalive_loop(self, websocket):
+		try:
+			while True:
+				await sleep(self.keepalive_interval)
+				if not self.is_websocket_connected(websocket):
+					break
+				user = self.get_user_from_websocket(websocket)
+				roomid = self.get_room_from_websocket(websocket)
+				try:
+					await websocket.send_text(dumps({"type": "server_ping", "ts": time()}))
+					# logger.debug(f"server_ping sent: user`{user}` roomid`{roomid}`")
+				except:
+					print_exc()
+					break
+				last_seen = self.last_pong.get(websocket, time())
+				if time() - last_seen > self.keepalive_timeout:
+					try:
+						await websocket.close(code=1011, reason="Server keepalive timeout")
+						logger.debug(f"keepalive timeout close: user`{user}` roomid`{roomid}`")
+					except:
+						print_exc()
+					break
+		except CancelledError:
+			return
+		except:
+			print_exc()
+		finally:
+			self.keepalive_tasks.pop(websocket, None)
+			self.last_pong.pop(websocket, None)
+
+	async def _delayed_disconnect_notice(self, roomid, user):
+		try:
+			await sleep(self.presence_grace_seconds)
+			current_users = self.active_rooms.get(roomid, [])
+			still_connected = any(u["username"] == user for u in current_users)
+			if still_connected:
+				return
+			await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
+		except CancelledError:
+			return
+		except:
+			print_exc()
+		finally:
+			key = self._disconnect_key(roomid, user)
+			self.disconnect_tasks.pop(key, None)
 
 	def get_user_from_websocket(self, websocket):
 		for room_data in self.active_rooms.values():
@@ -109,6 +198,15 @@ class ChatApp:
 				if user_data["websocket"] == websocket:
 					return roomid
 		return None
+
+	def is_websocket_connected(self, websocket):
+		try:
+			return (
+				websocket.client_state == WebSocketState.CONNECTED and
+				websocket.application_state == WebSocketState.CONNECTED
+			)
+		except:
+			return False
 
 	async def handle_watcher_update(self, websocket: WebSocket, data):
 		user = self.get_user_from_websocket(websocket)
@@ -126,22 +224,26 @@ class ChatApp:
 		user_imageurl = ""
 		if provided_imageurl:
 			user_imageurl = provided_imageurl
+			self.user_image_cache[user] = user_imageurl
 		else:
-			conn = get_db_connection()
-			if conn:
-				cursor = None
-				try:
-					cursor = conn.cursor()
-					cursor.execute("SELECT imageurl FROM users WHERE user = %s", (user,))
-					result = cursor.fetchone()
-					if result and result[0]:
-						user_imageurl = result[0]
-				except:
-					print_exc()
-				finally:
-					if cursor:
-						cursor.close()
-					conn.close()
+			user_imageurl = self.user_image_cache.get(user, "")
+			if not user_imageurl:
+				conn = get_db_connection()
+				if conn:
+					cursor = None
+					try:
+						cursor = conn.cursor()
+						cursor.execute("SELECT imageurl FROM users WHERE user = %s", (user,))
+						result = cursor.fetchone()
+						if result and result[0]:
+							user_imageurl = result[0]
+							self.user_image_cache[user] = user_imageurl
+					except:
+						print_exc()
+					finally:
+						if cursor:
+							cursor.close()
+						conn.close()
 		
 		if roomid not in self.room_watchers:
 			self.room_watchers[roomid] = []
@@ -166,11 +268,11 @@ class ChatApp:
 				"type": "watchers_update",
 				"watchers": watchers
 			}
-			
+
 			for user_data in self.active_rooms[roomid]:
 				websocket = user_data["websocket"]
 				try:
-					if websocket.client_state.value == 1:  # CONNECTED state
+					if self.is_websocket_connected(websocket):
 						await websocket.send_text(dumps(data))
 				except:
 					print_exc()
@@ -179,12 +281,16 @@ class ChatApp:
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
+
+		logger.debug(f"handle_connect: user`{user}` roomid`{roomid}` lastMessageDate`{lastMessageDate}`")
 		
 		existing_user_data = None
 		for user_data in self.active_rooms[roomid]:
 			if user_data["username"] == user:
 				existing_user_data = user_data
 				break
+
+		was_reconnect = existing_user_data is not None
 		
 		if existing_user_data:
 			logger.info(f"Kicking existing user connection: user'{user}' roomid'{roomid}'")
@@ -192,6 +298,7 @@ class ChatApp:
 				await existing_user_data["websocket"].close(code=1008, reason="New connection established")
 			except:
 				print_exc()
+			self.stop_keepalive(existing_user_data["websocket"])
 			
 			self.active_rooms[roomid] = [
 				user_data for user_data in self.active_rooms[roomid] 
@@ -203,8 +310,11 @@ class ChatApp:
 					w for w in self.room_watchers[roomid] 
 					if w["username"] != user
 				]
+
+		recently_left = self.cancel_pending_disconnect(roomid, user)
 		
 		self.active_rooms[roomid].append({"websocket": websocket, "username": user})
+		self.start_keepalive(websocket)
 		
 		if roomid not in self.room_watchers:
 			self.room_watchers[roomid] = []
@@ -224,10 +334,12 @@ class ChatApp:
 			await self.send_history_to_websocket(websocket, roomid, lastMessageDate)
 		else:
 			await self.send_history_to_websocket(websocket, roomid, limit=15)
-		await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
+		if not was_reconnect and not recently_left:
+			await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
+			logger.debug(f"join broadcast: user`{user}` roomid`{roomid}`")
 		await self.send_watchers_to_room(roomid)
 
-	async def handle_disconnect(self, websocket: WebSocket):
+	async def handle_disconnect(self, websocket: WebSocket, close_code=None):
 		roomid = self.get_room_from_websocket(websocket)
 		user = self.get_user_from_websocket(websocket)
 		if not user:
@@ -236,8 +348,11 @@ class ChatApp:
 		if roomid is None or roomid not in self.active_rooms:
 			logger.error(f"handle_disconnect: room is not active. user`{user}`")
 			return
+
+		self.stop_keepalive(websocket)
+		logger.debug(f"handle_disconnect: user`{user}` roomid`{roomid}` close_code`{close_code}`")
 			
-		await self.send_message_to_room(roomid, f"{user} left.", no_history=True)
+		self.schedule_disconnect_notice(roomid, user)
 		if roomid in self.room_watchers:
 			self.room_watchers[roomid] = [w for w in self.room_watchers[roomid] if w["username"] != user]
 
@@ -250,9 +365,15 @@ class ChatApp:
 		else:
 			await self.send_watchers_to_room(roomid)
 		
-		logger.info(f"disconnected: user`{user}` roomid`{roomid}`")
+		logger.info(f"disconnected: user`{user}` roomid`{roomid}` close_code`{close_code}`")
 
 	async def handle_message(self, websocket: WebSocket, data):
+		if data.get("type") == "server_pong":
+			self.last_pong[websocket] = time()
+			user = self.get_user_from_websocket(websocket)
+			roomid = self.get_room_from_websocket(websocket)
+			# logger.debug(f"server_pong received: user`{user}` roomid`{roomid}`")
+			return
 		if data.get("type") == "watcher_update":
 			await self.handle_watcher_update(websocket, data)
 			return
@@ -345,7 +466,7 @@ class ChatApp:
 						for user_data in self.active_rooms[roomid]:
 							websocket_user = user_data["websocket"]
 							try:
-								if websocket_user.client_state.value == 1:  # CONNECTED state
+								if self.is_websocket_connected(websocket_user):
 									await websocket_user.send_text(dumps(data))
 							except:
 								print_exc()
@@ -379,7 +500,7 @@ class ChatApp:
 				for user_data in self.active_rooms[roomid]:
 					websocket_user = user_data["websocket"]
 					try:
-						if websocket_user.client_state.value == 1:  # CONNECTED state
+						if self.is_websocket_connected(websocket_user):
 							await websocket_user.send_text(dumps(data))
 					except:
 						print_exc()
@@ -447,7 +568,7 @@ class ChatApp:
 				for user_data in self.active_rooms[roomid]:
 					websocket_user = user_data["websocket"]
 					try:
-						if websocket_user.client_state.value == 1:  # CONNECTED state
+						if self.is_websocket_connected(websocket_user):
 							await websocket_user.send_text(dumps(data))
 					except:
 						print_exc()
@@ -579,7 +700,7 @@ class ChatApp:
 					"has_more": has_more,
 					"is_pagination": before_message_id is not None
 				}
-				if websocket.client_state.value == 1:  # CONNECTED state
+				if self.is_websocket_connected(websocket):
 					await websocket.send_text(dumps(data))
 			finally:
 				if cursor:
@@ -596,7 +717,7 @@ class ChatApp:
 			"date": time(),
 		}
 		try:
-			if websocket.client_state.value == 1:  # CONNECTED state
+			if self.is_websocket_connected(websocket):
 				await websocket.send_text(dumps(data))
 		except:
 			print_exc()
@@ -670,7 +791,7 @@ class ChatApp:
 			for user_data in self.active_rooms[roomid]:
 				websocket = user_data["websocket"]
 				try:
-					if websocket.client_state.value == 1:  # CONNECTED state
+					if self.is_websocket_connected(websocket):
 						await websocket.send_text(dumps(data))
 				except:
 					print_exc()
@@ -691,6 +812,9 @@ async def websocket_endpoint(
 	roompsw: str = Query(...),
 	lastMessageDate: float = Query(0),
 ):
+
+	await websocket.accept()
+
 	if not (user and psw and roomid and roompsw):
 		logger.error("Missing required parameters")
 		await websocket.close(code=1008, reason="Missing required parameters")
@@ -707,12 +831,10 @@ async def websocket_endpoint(
 		await websocket.close(code=1008, reason="Invalid room credentials")
 		return
 	
-
-	await websocket.accept()
 	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")
 	
 	try:
-		if websocket.client_state.value == 1:
+		if chat.is_websocket_connected(websocket):
 			await websocket.send_text(dumps({
 				"type": "room_info",
 				"room_name": room_name,
@@ -721,6 +843,7 @@ async def websocket_endpoint(
 	except:
 		print_exc()
 
+	disconnect_code = None
 	try:
 		await chat.handle_connect(websocket, user, roomid, lastMessageDate)
 
@@ -732,32 +855,42 @@ async def websocket_endpoint(
 
 					if message_data.get("type") == "ping":
 						try:
-							await websocket.send_text(dumps({"type": "pong", "ts": time()}))
+							if chat.is_websocket_connected(websocket):
+								await websocket.send_text(dumps({"type": "pong", "ts": time()}))
+								# logger.debug(f"client ping received, pong sent: user`{user}` roomid`{roomid}`")
 						except:
 							print_exc()
 						continue
 
-					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages"]:
+					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages", "server_pong"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					try:
-						if websocket.client_state.value == 1:
+						if chat.is_websocket_connected(websocket):
 							await chat.send_message_to_websocket(websocket, "Invalid message format")
 					except:
 						print_exc()
 				except:
 					logger.error(f"Error handling message from {user}")
 					print_exc()
-			except WebSocketDisconnect:
+			except WebSocketDisconnect as e:
+				disconnect_code = e.code
+				logger.warning(f"receive_text disconnect: user`{user}` roomid`{roomid}` code`{disconnect_code}`")
 				break
 			except:
 				logger.error(f"WebSocket error for {user}")
 				print_exc()
+				disconnect_code = getattr(websocket, "close_code", None)
 				break
-		await chat.handle_disconnect(websocket)
-
-	except WebSocketDisconnect:
-		await chat.handle_disconnect(websocket)
+	except WebSocketDisconnect as e:
+		disconnect_code = e.code
+		logger.warning(f"outer disconnect: user`{user}` roomid`{roomid}` code`{disconnect_code}`")
 	except:
 		print_exc()
-		await chat.handle_disconnect(websocket)
+		if disconnect_code is None:
+			disconnect_code = getattr(websocket, "close_code", None)
+		logger.error(f"outer websocket error: user`{user}` roomid`{roomid}` code`{disconnect_code}`")
+	finally:
+		if disconnect_code is None:
+			disconnect_code = getattr(websocket, "close_code", None)
+		await chat.handle_disconnect(websocket, close_code=disconnect_code)

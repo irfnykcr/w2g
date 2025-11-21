@@ -44,6 +44,11 @@ const availableColors = [
 	'#000075', '#ffffff', '#000000'
 ]
 
+const WATCHER_UPDATE_INTERVAL = 4000
+
+const MESSAGE_ACK_TIMEOUT = 8000
+const MAX_MESSAGE_TIMEOUTS = 2
+
 function simpleHash(str) {
 	let hash = 0
 	for (let i = 0; i < str.length; i++) {
@@ -72,6 +77,10 @@ let hasUnreadMessages = false
 let notificationSound = null
 let messageHandlers = new Map()
 
+
+const HEARTBEAT_CHECK_INTERVAL = 5000
+const HEARTBEAT_PING_THRESHOLD = 20000
+const HEARTBEAT_TIMEOUT = 60000
 
 // heartbeat
 let heartbeatInterval = null
@@ -809,6 +818,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let reconnectAttempts = 0
 	let lastMessageDate = 0
 	let waitingForMessage = 0
+	let consecutiveSendTimeouts = 0
 
 	function connectWebSocket(reconnectDelay=0) {
 		if (isConnecting) {
@@ -854,6 +864,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 				
 				try {
 					const newSocket = new WebSocket(`wss://${SERVER_ENDPOINT}/wss/?${queryParams}`)
+					loggerWss.debug(`WebSocket instance created for user'${USER}' room'${ROOM_ID}' reconnectAttempt'${reconnectAttempts}'`)
 					
 					connectionTimeout = setTimeout(() => {
 						if (newSocket.readyState === WebSocket.CONNECTING) {
@@ -892,6 +903,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			chatStatus("connecting")
 
 			lastPong = Date.now()
+			consecutiveSendTimeouts = 0
 			if (heartbeatInterval) {
 				clearInterval(heartbeatInterval)
 				heartbeatInterval = null
@@ -907,8 +919,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 					return
 				}
 				
-				const lastpong_relative = Date.now() - lastPong
-				if (lastpong_relative > 12000) {
+				const idleDuration = Date.now() - lastPong
+				if (idleDuration >= HEARTBEAT_TIMEOUT) {
 					loggerWss.warn('heartbeatInterval: No response, forcing close')
 					if (heartbeatInterval) { 
 						clearInterval(heartbeatInterval) 
@@ -932,12 +944,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 					return
 				}
 				
-				if (lastpong_relative < 4000) {
-					return
+				if (idleDuration >= HEARTBEAT_PING_THRESHOLD) {
+					// loggerWss.debug(`heartbeat ping -> server (idle ${idleDuration}ms)`)
+					sendSafe({ type: 'ping', ts: Date.now() })
 				}
-				
-				sendSafe({ type: 'ping', ts: Date.now() })
-			}, 5000)
+			}, HEARTBEAT_CHECK_INTERVAL)
 			
 			setTimeout(() => {
 				window.electronAPI.getVLCStatus().then((vlcData) => {
@@ -957,23 +968,30 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}, 1000)
 		}
 
-		socket.onmessage = (r) => {
-			let data = null
-			try {
-				data = JSON.parse(r.data)
-			} catch (err) {
-				loggerWss.error('Failed to parse incoming message:', err)
-				return
-			}
+			socket.onmessage = (r) => {
+				let data = null
+				try {
+					data = JSON.parse(r.data)
+				} catch (err) {
+					loggerWss.error('Failed to parse incoming message:', err)
+					return
+				}
 
-			if (data && data.type === 'pong') {
-				// loggerWss.debug('Got pong')
+				if (data && data.type === 'server_ping') {
+					// loggerWss.debug(`server_ping received (ts ${data.ts || 'n/a'})`)
+					sendSafe({ type: 'server_pong', ts: Date.now() })
+					// loggerWss.debug('server_pong sent')
+					return
+				}
+				if (data && data.type === 'pong') {
+					// loggerWss.debug('pong received from server')
 				lastPong = Date.now()
 				return
 			}
 			lastPong = Date.now()
 
 			waitingForMessage = 0
+			consecutiveSendTimeouts = 0
 			// loggerWss.debug("Message received", data)
 
 			if (data.type == "room_info") {
@@ -1087,8 +1105,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 		}
 		
-		socket.onclose = (ev) => {
-			loggerWss.info("WebSocket connection closed", `code:${ev.code}`, `reason:${ev.reason || 'none'}`)
+			socket.onclose = (ev) => {
+			const closeDetails = `code:${ev.code} reason:${ev.reason || 'none'} clean:${ev.wasClean} readyState:${socket.readyState} online:${navigator.onLine}`
+			loggerWss.info("WebSocket connection closed", closeDetails)
 			
 			if (heartbeatInterval) { 
 				clearInterval(heartbeatInterval)
@@ -1116,9 +1135,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 			
 			isConnecting = false
 			
-			if (ev.code !== 1000) {
-				const delay = navigator.onLine ? 2000 : 5000
-				reconnectTimeout = setTimeout(() => connectWebSocket(1000), delay)
+				if (ev.code !== 1000) {
+					const delay = navigator.onLine ? 2000 : 5000
+					loggerWss.debug(`Scheduling reconnect in ${delay}ms due to close code ${ev.code}`)
+					reconnectTimeout = setTimeout(() => connectWebSocket(1000), delay)
 			}
 		}
 
@@ -1240,24 +1260,30 @@ document.addEventListener("DOMContentLoaded", async () => {
 			const sentMessage = waitingForMessage
 			setTimeout(() => {
 				if (waitingForMessage === sentMessage){
-					loggerWss.error(`WSS TIMEOUT! waitingForMessage'${waitingForMessage}' sentMessage'${sentMessage}'`)
-					if (heartbeatInterval) { 
-						clearInterval(heartbeatInterval) 
-						heartbeatInterval = null 
-					}
-					try { 
-						wss.terminate() 
-					} catch(e) { 
-						try { 
-							wss.close(3001, 'message_timeout') 
-						} catch(e2) {
-							loggerWss.warn(`message timeout: could not terminate/close wss. e:${e} e2:${e2}`)
+					consecutiveSendTimeouts++
+					loggerWss.warn(`sendMessage timeout ${consecutiveSendTimeouts}/${MAX_MESSAGE_TIMEOUTS}`)
+					if (consecutiveSendTimeouts >= MAX_MESSAGE_TIMEOUTS) {
+						if (heartbeatInterval) { 
+							clearInterval(heartbeatInterval) 
+							heartbeatInterval = null 
 						}
+						try {
+							if (wss && wss.terminate) {
+								wss.terminate()
+							} else if (wss) {
+								wss.close(3001, 'message_timeout')
+							}
+						} catch(e) {
+							loggerWss.warn(`message timeout: could not terminate/close wss. e:${e}`)
+						}
+						wss = null
+						connectWebSocket(2000)
+						consecutiveSendTimeouts = 0
+					} else {
+						sendSafe({ type: 'ping', ts: Date.now() })
 					}
-					wss = null
-					connectWebSocket(2000)
 				}
-			}, 3000);
+			}, MESSAGE_ACK_TIMEOUT)
 			messageInput.value = ""
 			
 			if (replyState.isReplying) {
@@ -1661,7 +1687,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 				detailedInfo.is_uptodate
 			)
 		}
-	}, 2000)
+	}, WATCHER_UPDATE_INTERVAL)
 	
 	window.addEventListener('online', () => {
 		loggerWss.info('Device back online')
