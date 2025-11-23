@@ -102,7 +102,6 @@ class ChatApp:
 		self.last_pong = {}
 		self.keepalive_interval = 30
 		self.keepalive_timeout = 90
-		self.user_image_cache = {}
 
 	def _disconnect_key(self, roomid, user):
 		return f"{roomid}:{user}"
@@ -216,34 +215,9 @@ class ChatApp:
 			return
 		
 		is_watching = data.get("is_watching", False)
-		provided_imageurl = data.get("imageurl", "")
 		current_time = data.get("current_time", 0)
 		is_playing = data.get("is_playing", False)
 		is_uptodate = data.get("is_uptodate", False)
-		
-		user_imageurl = ""
-		if provided_imageurl:
-			user_imageurl = provided_imageurl
-			self.user_image_cache[user] = user_imageurl
-		else:
-			user_imageurl = self.user_image_cache.get(user, "")
-			if not user_imageurl:
-				conn = get_db_connection()
-				if conn:
-					cursor = None
-					try:
-						cursor = conn.cursor()
-						cursor.execute("SELECT imageurl FROM users WHERE user = %s", (user,))
-						result = cursor.fetchone()
-						if result and result[0]:
-							user_imageurl = result[0]
-							self.user_image_cache[user] = user_imageurl
-					except:
-						print_exc()
-					finally:
-						if cursor:
-							cursor.close()
-						conn.close()
 		
 		if roomid not in self.room_watchers:
 			self.room_watchers[roomid] = []
@@ -252,7 +226,6 @@ class ChatApp:
 		
 		self.room_watchers[roomid].append({
 			"username": user,
-			"imageurl": user_imageurl,
 			"current_time": current_time,
 			"is_playing": is_playing,
 			"is_uptodate": is_uptodate,
@@ -323,7 +296,6 @@ class ChatApp:
 		if not user_already_in_watchers:
 			self.room_watchers[roomid].append({
 				"username": user,
-				"imageurl": "",
 				"current_time": 0,
 				"is_playing": False,
 				"is_uptodate": False,
@@ -376,6 +348,9 @@ class ChatApp:
 			return
 		if data.get("type") == "watcher_update":
 			await self.handle_watcher_update(websocket, data)
+			return
+		elif data.get("type") == "request_user_image":
+			await self.handle_user_image_request(websocket, data)
 			return
 		elif data.get("type") == "new_reaction":
 			await self.handle_reaction(websocket, data)
@@ -797,6 +772,44 @@ class ChatApp:
 					print_exc()
 					logger.error(f"send_message_to_room: Error sending message to {user_data['username']}")
 			# maybe disconnect unavailable users?
+
+	def get_user_image(self, username: str):
+		if not username:
+			return ""
+		conn = get_db_connection()
+		if not conn:
+			return ""
+		cursor = None
+		try:
+			cursor = conn.cursor()
+			cursor.execute("SELECT imageurl FROM users WHERE user = %s", (username,))
+			result = cursor.fetchone()
+			if result and result[0]:
+				return result[0]
+			return ""
+		except:
+			print_exc()
+			return ""
+		finally:
+			if cursor:
+				cursor.close()
+			conn.close()
+
+	async def handle_user_image_request(self, websocket: WebSocket, data):
+		target_user = data.get("username")
+		if not target_user:
+			return
+		imageurl = self.get_user_image(target_user)
+		response = {
+			"type": "user_image",
+			"username": target_user,
+			"imageurl": imageurl
+		}
+		try:
+			if self.is_websocket_connected(websocket):
+				await websocket.send_text(dumps(response))
+		except:
+			print_exc()
 					
 
 
@@ -862,7 +875,7 @@ async def websocket_endpoint(
 							print_exc()
 						continue
 
-					if message_data.get("type") in ["send_message", "watcher_update", "new_reaction", "delete_message", "load_more_messages", "server_pong"]:
+					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					try:

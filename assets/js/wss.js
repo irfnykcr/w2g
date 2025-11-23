@@ -28,6 +28,8 @@ let replyState = {
 let messagesById = new Map()
 let messageReactions = new Map()
 let userColors = new Map()
+let userImageCache = new Map()
+let pendingImageRequests = new Set()
 let wss
 let USER 
 let hasMoreMessages = true
@@ -70,6 +72,115 @@ function getUserColor(username) {
 	userColors.set(username, color)
 	return color
 } 
+
+function cacheUserImage(username, imageUrl) {
+	if (!username) return
+	pendingImageRequests.delete(username)
+	const normalized = typeof imageUrl === 'string' ? imageUrl.trim() : ''
+	if (normalized) {
+		if (userImageCache.get(username) !== normalized) {
+			userImageCache.set(username, normalized)
+			refreshMessageAvatars(username)
+			refreshWatcherAvatars(username)
+		}
+		return
+	}
+	if (!userImageCache.has(username)) {
+		userImageCache.set(username, null)
+		refreshMessageAvatars(username)
+		refreshWatcherAvatars(username)
+	}
+}
+
+function getCachedUserImage(username) {
+	if (!username) return undefined
+	return userImageCache.has(username) ? userImageCache.get(username) : undefined
+}
+
+function getUserInitial(username) {
+	if (!username) return '?'
+	return username.charAt(0).toUpperCase()
+}
+
+function buildMessageAvatarInner(username) {
+	if (!username || username === 'system') return ''
+	const cached = getCachedUserImage(username)
+	if (cached) {
+		return `
+			<img src="${cached}" alt="${username}" class="w-6 h-6 rounded-full object-cover border border-gray-600" onerror="this.classList.add('hidden'); const fallback = this.nextElementSibling; if (fallback) { fallback.classList.remove('hidden') }" />
+			<div class="hidden w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(username)}]">${getUserInitial(username)}</div>
+		`
+	}
+	return `
+		<div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(username)}]">${getUserInitial(username)}</div>
+	`
+}
+
+function refreshMessageAvatars(username) {
+	if (!username) return
+	const nodes = document.querySelectorAll('[data-message-avatar]')
+	nodes.forEach((node) => {
+		if (node.dataset.messageAvatar === username) {
+			node.innerHTML = buildMessageAvatarInner(username)
+		}
+	})
+}
+
+function refreshAllMessageAvatars() {
+	const nodes = document.querySelectorAll('[data-message-avatar]')
+	nodes.forEach((node) => {
+		node.innerHTML = buildMessageAvatarInner(node.dataset.messageAvatar)
+	})
+}
+
+function refreshWatcherAvatars(username) {
+	const watcherNodes = document.querySelectorAll(`[data-watcher="${username}"] .watcher-avatar`)
+	watcherNodes.forEach((node) => renderWatcherAvatar(node, username))
+}
+
+function renderWatcherAvatar(container, username) {
+	if (!container) return
+	const cached = getCachedUserImage(username)
+	let watcherImage = container.querySelector('.watcher-image')
+	let watcherFallback = container.querySelector('.watcher-fallback')
+	if (!watcherFallback) {
+		watcherFallback = document.createElement('div')
+		watcherFallback.className = 'w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold flex-shrink-0 watcher-fallback'
+		watcherFallback.textContent = getUserInitial(username)
+		watcherFallback.style.display = 'flex'
+		watcherFallback.style.color = getUserColor(username)
+		container.appendChild(watcherFallback)
+	}
+	if (cached) {
+		if (!watcherImage) {
+			watcherImage = document.createElement('img')
+			watcherImage.className = 'w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image'
+			watcherImage.onerror = function() {
+				this.style.display = 'none'
+				if (watcherFallback) watcherFallback.style.display = 'flex'
+			}
+			container.insertBefore(watcherImage, watcherFallback)
+		}
+		watcherImage.src = cached
+		watcherImage.style.display = 'block'
+		watcherFallback.style.display = 'none'
+	} else {
+		if (watcherImage) watcherImage.style.display = 'none'
+		watcherFallback.textContent = getUserInitial(username)
+		watcherFallback.style.display = 'flex'
+	}
+}
+
+function requestUserImage(username) {
+	if (!username || username === 'system') return
+	if (pendingImageRequests.has(username)) return
+	if (!wss || wss.readyState !== WebSocket.OPEN) return
+	pendingImageRequests.add(username)
+	const payload = { type: 'request_user_image', username }
+	if (!sendSafe(payload)) {
+		pendingImageRequests.delete(username)
+	}
+}
 
 // focus tracking and notification system
 let isWindowFocused = true
@@ -457,42 +568,42 @@ function handleMessageDeletion(data) {
             }
         }
         
-		if (messageHandlers.has(messageId)) {
-			const stored = messageHandlers.get(messageId)
-			const el = stored.element
-			const h = stored.handlers
-			if (h.dblclick) el.removeEventListener('dblclick', h.dblclick)
-			if (h.contextmenu) el.removeEventListener('contextmenu', h.contextmenu)
-			if (h.replyClick) {
-				const replyBtn = el.querySelector('.reply-btn')
-				if (replyBtn) replyBtn.removeEventListener('click', h.replyClick)
+			if (messageHandlers.has(messageId)) {
+				const stored = messageHandlers.get(messageId)
+				const el = stored.element
+				const h = stored.handlers
+				if (h.dblclick) el.removeEventListener('dblclick', h.dblclick)
+				if (h.contextmenu) el.removeEventListener('contextmenu', h.contextmenu)
+				if (h.replyClick) {
+					const replyBtn = el.querySelector('.reply-btn')
+					if (replyBtn) replyBtn.removeEventListener('click', h.replyClick)
+				}
+				if (h.reactionClick) {
+					const reactionBtn = el.querySelector('.reaction-add-btn')
+					if (reactionBtn) reactionBtn.removeEventListener('click', h.reactionClick)
+				}
+				messageHandlers.delete(messageId)
 			}
-			if (h.reactionClick) {
-				const reactionBtn = el.querySelector('.reaction-add-btn')
-				if (reactionBtn) reactionBtn.removeEventListener('click', h.reactionClick)
-			}
-			messageHandlers.delete(messageId)
-		} else {
 			try { messageElement.removeEventListener('dblclick', () => {}) } catch(e){}
 			try { messageElement.removeEventListener('contextmenu', () => {}) } catch(e){}
-		}
+			try { messageElement.removeEventListener('mouseover', () => {}) } catch(e){}
         
-        if (messageReactions.has(messageId)) {
-            messageReactions.delete(messageId)
-            const reactionsContainer = messageElement.querySelector('.reactions-container')
-            if (reactionsContainer) {
-                reactionsContainer.remove()
-            }
-        }
+			if (messageReactions.has(messageId)) {
+					messageReactions.delete(messageId)
+					const reactionsContainer = messageElement.querySelector('.reactions-container')
+					if (reactionsContainer) {
+							reactionsContainer.remove()
+					}
+			}
 
-        messagesById.forEach((element, id) => {
-            const replyDiv = element.querySelector('[onclick*="scrollToMessage(' + messageId + ')"]')
-            if (replyDiv) {
-                updateReplyToDeletedMessage(replyDiv)
-            }
-        })
-        
-        loggerWss.debug(`Message ${messageId} marked as deleted`)
+			messagesById.forEach((element, id) => {
+					const replyDiv = element.querySelector('[onclick*="scrollToMessage(' + messageId + ')"]')
+					if (replyDiv) {
+							updateReplyToDeletedMessage(replyDiv)
+					}
+			})
+			
+			loggerWss.debug(`Message ${messageId} marked as deleted`)
     }
 }
 
@@ -629,16 +740,24 @@ function updateWatchersList(watchers) {
     
     const processedWatchers = new Set()
     
-    watchers.forEach(watcher => {
+	watchers.forEach(watcher => {
 		processedWatchers.add(watcher.username)
-        
-        const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
-        if (noWatchersMsg) {
-            noWatchersMsg.remove()
-        }
-        
-        let watcherElement = existingElements.get(watcher.username)
-        const isNewElement = !watcherElement
+		const hasImageField = Object.prototype.hasOwnProperty.call(watcher, 'imageurl')
+		const providedImage = hasImageField && typeof watcher.imageurl === 'string' ? watcher.imageurl : ''
+		if (hasImageField) {
+			cacheUserImage(watcher.username, providedImage)
+		}
+		const cachedWatcherImage = getCachedUserImage(watcher.username)
+		if (typeof cachedWatcherImage === 'undefined') {
+			requestUserImage(watcher.username)
+		}
+		const noWatchersMsg = watchersContainer.querySelector('.no-watchers-message')
+		if (noWatchersMsg) {
+			noWatchersMsg.remove()
+		}
+		
+		let watcherElement = existingElements.get(watcher.username)
+		const isNewElement = !watcherElement
         
         if (isNewElement) {
             watcherElement = document.createElement('div')
@@ -659,8 +778,8 @@ function updateWatchersList(watchers) {
         }
         
         const currentBorderClass = watcherElement.classList.contains('border-gray-500') ? 'border-gray-500' : 
-                                   watcherElement.classList.contains('border-red-500') ? 'border-red-500' : 
-                                   `border-[${getUserColor(watcher.username)}]`
+						watcherElement.classList.contains('border-red-500') ? 'border-red-500' : 
+						`border-[${getUserColor(watcher.username)}]`
         
         if (newBorderClass !== currentBorderClass) {
             watcherElement.classList.remove('border-gray-500', 'border-red-500', `border-[${getUserColor(watcher.username)}]`)
@@ -678,30 +797,9 @@ function updateWatchersList(watchers) {
         const formattedTime = isIdle ? 'Idle' : formatTime(watcher.current_time || 0)
         // const syncText = isIdle ? '' : (watcher.is_uptodate ? 'Synced' : 'Behind')
         
-        if (isNewElement) {
-            let imageHtml = ''
-            if (watcher.imageurl) {
-                imageHtml = `
-					<img 
-						src="${watcher.imageurl}" 
-						alt="${watcher.username}" 
-						class="w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
-						onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
-					/>
-					<div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
-						${watcher.username.charAt(0).toUpperCase()}
-					</div>
-                `
-            } else {
-                imageHtml = `
-					<div class="w-6 h-6 rounded-full bg-gray-600 flex items-center justify-center text-xs font-bold text-[${getUserColor(watcher.username)}] flex-shrink-0 watcher-fallback">
-						${watcher.username.charAt(0).toUpperCase()}
-					</div>
-                `
-            }
-
-            watcherElement.innerHTML = `
-                ${imageHtml}
+		if (isNewElement) {
+			watcherElement.innerHTML = `
+				<div class="watcher-avatar flex-shrink-0"></div>
                 <div class="flex flex-col min-w-0 flex-1">
                     <div class="font-medium text-[${getUserColor(watcher.username)}] truncate text-xs watcher-username">${watcher.username}</div>
                     <div class="flex items-center gap-1 text-xs text-gray-400">
@@ -730,27 +828,14 @@ function updateWatchersList(watchers) {
                 }
             }
             
-           let watcherImage = watcherElement.querySelector('.watcher-image')
-			const watcherfallback = watcherElement.querySelector(".watcher-fallback")
-			if (watcher.imageurl) {
-				if (!watcherImage) {
-					watcherImage = document.createElement('img')
-					watcherImage.className = 'w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image'
-					watcherImage.onerror = function() {
-						this.style.display = 'none'
-						if (this.nextElementSibling) this.nextElementSibling.style.display = 'flex'
-					}
-					if (watcherfallback) {
-						watcherElement.insertBefore(watcherImage, watcherfallback)
-					}
-				}
-				if (watcherfallback) {
-					watcherfallback.classList = "hidden"
-				}
-				watcherImage.src = watcher.imageurl
-				watcherImage.classList = "w-6 h-6 rounded-full object-cover border border-gray-600 flex-shrink-0 watcher-image"
+			const usernameNode = watcherElement.querySelector('.watcher-username')
+			if (usernameNode) {
+				usernameNode.style.color = getUserColor(watcher.username)
 			}
         }
+
+		const avatarContainer = watcherElement.querySelector('.watcher-avatar')
+		renderWatcherAvatar(avatarContainer, watcher.username)
     })
     
     existingElements.forEach((element, username) => {
@@ -901,6 +986,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 			reconnectAttempts = 0
 			
 			chatStatus("connecting")
+			userImageCache.clear()
+			pendingImageRequests.clear()
+			refreshAllMessageAvatars()
 
 			lastPong = Date.now()
 			consecutiveSendTimeouts = 0
@@ -1098,6 +1186,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				}
 				
 				isLoadingMessages = false
+			} else if (data.type == "user_image") {
+				cacheUserImage(data.username, data.imageurl || '')
 			} else if (data.type == "watchers_update") {
 				updateWatchersList(data.watchers)
 			} else {
@@ -1345,13 +1435,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const text = data.message
 		const messageType = data.message_type || "new_message"
 		const isDeleted = data.is_deleted || false
+		const messageTimestamp = data.date || Math.floor(Date.now() / 1000)
 		
-		if (data.date && data.date > lastMessageDate) {
-			lastMessageDate = data.date
+		if (messageTimestamp && messageTimestamp > lastMessageDate) {
+			lastMessageDate = messageTimestamp
 		}
 		
-		const date = new Date(data.date * 1000).toLocaleString()
+		const fulldate = new Date(messageTimestamp * 1000)
 		const replyTo = data.reply_to || null
+		if (user && user !== 'system' && typeof getCachedUserImage(user) === 'undefined') {
+			requestUserImage(user)
+		}
 
 		if (messageType === "new_message" && user !== USER && !isDeleted && !isHistoryMessage) {
 			if (!isWindowFocused) {
@@ -1403,6 +1497,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		messageDiv.style.borderLeftColor = userColor
 		messageDiv.setAttribute('data-message-id', messageId)
 		messageDiv.setAttribute('data-message-user', user)
+		messageDiv.setAttribute('data-message-date', messageTimestamp.toString())
 		
 		let replyContent = ''
 		if (replyTo) {
@@ -1433,13 +1528,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 
 		const processedContent = window.processMessageContent ? window.processMessageContent(text) : text
+		const avatarSection = user !== "system" ? `
+			<div class="message-avatar flex items-center gap-2" data-message-avatar="${user}">
+				${buildMessageAvatarInner(user)}
+			</div>
+		` : ''
 		
 		messageDiv.innerHTML = `
 			${replyContent}
 			<div class="message-header flex justify-between items-start mb-2">
-				<span class="font-semibold ${user === "system" ? "text-admin" : ""} text-sm break-words" style="${user !== "system" ? `color: ${userColor}` : ""}">${user}</span>
+				<div id="message-user-info" class="flex items-center gap-2">
+					${avatarSection}
+					<span class="font-semibold ${user === "system" ? "text-admin" : ""} text-sm break-words" style="${user !== "system" ? `color: ${userColor}` : ""}">${user}</span>
+				</div>
 				<div class="message-actions flex items-center gap-2 text-xs text-gray-500 ml-2 flex-shrink-0">
-					<span class="message-date">${date}</span>
+					<span class="header-date">${fulldate.toLocaleDateString()}</span>
 					${user !== "system" && messageId ?
 						`<button class="reply-btn hover:text-[${getUserColor(user)}] transition-colors duration-200" title="Reply">
 							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-reply" viewBox="0 0 16 16">
@@ -1451,8 +1554,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 			</div>
 			<div class="flex flex-wrap items-end gap-2">
 				<div class="text-gray-300 text-sm break-words flex-1 min-w-0">${processedContent}</div>
+				<span class="message-date hidden text-gray-400 text-xs">${fulldate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
 				${user !== "system" && messageId ?
-					`<button class="reaction-add-btn hover:text-[${getUserColor(user)}] transition-colors duration-200 opacity-70 hover:opacity-100 flex-shrink-0 self-end" title="Add reaction">
+					`<button class="reaction-add-btn hidden hover:text-[${getUserColor(user)}] transition-colors duration-200 opacity-70 hover:opacity-100 flex-shrink-0 self-end" title="Add reaction">
 						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
 							<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
 							<path d="M4.285 9.567a.5.5 0 0 1 .683.183A3.5 3.5 0 0 0 8 11.5a3.5 3.5 0 0 0 3.032-1.75.5.5 0 1 1 .866.5A4.5 4.5 0 0 1 8 12.5a4.5 4.5 0 0 1-3.898-2.25.5.5 0 0 1 .183-.683M7 6.5C7 7.328 6.552 8 6 8s-1-.672-1-1.5S5.448 5 6 5s1 .672 1 1.5m4 0c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5S9.448 5 10 5s1 .672 1 1.5"/>
@@ -1507,18 +1611,37 @@ document.addEventListener("DOMContentLoaded", async () => {
 					showReactionModal(reactionBtn, messageId)
 				}
 				reactionBtn.addEventListener('click', handlers.reactionClick)
+				const message_date = messageDiv.querySelector('.message-date')
+				messageDiv.addEventListener('mouseover', () => {
+					reactionBtn.classList.remove('hidden')
+					if (message_date) {
+						message_date.classList.remove('hidden')
+					}
+				})
+				messageDiv.addEventListener('mouseout', () => {
+					reactionBtn.classList.add('hidden')
+					if (message_date) {
+						message_date.classList.add('hidden')
+					}
+				})
 			}
 
 			messageHandlers.set(messageId, { element: messageDiv, handlers })
 		}
+		if (messages) {
 
-		if (isPagination) {
-			if (messages) {
+			const withinTimeMs = 5 * 60 * 1000 // 30 minutes
+
+			if (isPagination) {
 				messages.insertBefore(messageDiv, messages.firstChild)
 				
 				const nextSibling = messageDiv.nextElementSibling
 				const hasReply = replyTo !== null
-				const isGroupedWithNext = shouldGroupWithNext(user, nextSibling, hasReply, isDeleted)
+				
+				const nextDate = nextSibling ? parseInt(nextSibling.getAttribute('data-message-date')) * 1000 : null
+				const timeDiff = nextDate ? Math.abs(fulldate - nextDate) : 0
+				const isWithinTime = nextDate ? timeDiff <= withinTimeMs : false
+				const isGroupedWithNext = nextSibling ? (shouldGroupWithNext(user, nextSibling, hasReply, isDeleted) && isWithinTime) : false
 				const isFirst = true
 				
 				updateMessageGrouping(messageDiv, isFirst, !isGroupedWithNext)
@@ -1529,12 +1652,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 					const isNextFirst = !shouldGroupWithNext(nextSibling.getAttribute('data-message-user'), nextSibling.nextElementSibling, nextHasReply, nextIsDeleted)
 					updateMessageGrouping(nextSibling, false, isNextFirst)
 				}
-			}
-		} else {
-			if (messages) {
+			} else {
 				const previousSibling = messages.lastElementChild
 				const hasReply = replyTo !== null
-				const isGroupedWithPrevious = shouldGroupWithPrevious(user, previousSibling, hasReply, isDeleted)
+				
+				const previousDate = previousSibling ? parseInt(previousSibling.getAttribute('data-message-date')) * 1000 : null
+				const timeDiff = previousDate ? Math.abs(fulldate - previousDate) : 0
+				const isWithinTime = previousDate ? timeDiff <= withinTimeMs : false
+				const isGroupedWithPrevious = previousSibling ? (shouldGroupWithPrevious(user, previousSibling, hasReply, isDeleted) && isWithinTime) : false
 				
 				messages.appendChild(messageDiv)
 				
@@ -1733,6 +1858,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	})
 
 	window.addEventListener('beforeunload', () => {
+		pendingImageRequests.clear()
 		if (watcherUpdateInterval) {
 			clearInterval(watcherUpdateInterval)
 		}
