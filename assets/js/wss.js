@@ -1190,6 +1190,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 				cacheUserImage(data.username, data.imageurl || '')
 			} else if (data.type == "watchers_update") {
 				updateWatchersList(data.watchers)
+			} else if (data.type == "video_history") {
+				loggerWss.info("Received video_history:", data.history)
+				if (window.handleVideoHistory) {
+					window.handleVideoHistory(data.history)
+				}
+			} else if (data.type == "video_history_update") {
+				loggerWss.info("Received video_history_update:", data.entry)
+				if (window.handleVideoHistoryUpdate) {
+					window.handleVideoHistoryUpdate(data.entry)
+				} else {
+					loggerWss.warn("handleVideoHistoryUpdate not available")
+				}
 			} else {
 				loggerWss.warn("couldnt match the type.", data.type)
 			}
@@ -1801,6 +1813,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	window.scrollToMessage = scrollToMessage
 	window.sendWatcherUpdate = sendWatcherUpdate
+	window.sendVideoHistoryUpdate = (entry) => {
+		loggerWss.info("sendVideoHistoryUpdate called with:", entry)
+		if (wss && wss.readyState === WebSocket.OPEN) {
+			loggerWss.info("Sending video_history_update to wsschat")
+			wss.send(JSON.stringify({
+				type: "video_history_update",
+				entry: entry
+			}))
+		} else {
+			loggerWss.warn("Cannot send video_history_update - wss not open, state:", wss ? wss.readyState : "null")
+		}
+	}
 	
 	let watcherUpdateInterval = setInterval(async () => {
 		if (isCurrentlyWatching && lastVLCData && lastVLCData.status !== 'closed' && lastVLCData.status !== 'error' && lastVLCData.status !== 'stopped') {

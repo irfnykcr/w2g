@@ -13,6 +13,8 @@ from atexit import register
 from base64 import b64decode, b64encode
 import logging
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+import httpx
 load_dotenv()
 
 logging.basicConfig(
@@ -43,6 +45,64 @@ connection_pool = pooling.MySQLConnectionPool(
 )
 HOME = getenv("DIR_SERVER")
 SUBTITLES_DIR = fr"{HOME}/subtitles"
+
+def check_url(url: str): # probably should add more checks
+	if url.startswith("https://"):
+		return True
+	return False
+
+async def get_file_info(url: str):
+	try:
+		parsed = urlparse(url)
+		if parsed.netloc != "cdn.turkuazz.vip":
+			return None
+		from urllib.parse import parse_qs
+		query_params = parse_qs(parsed.query)
+		vid = query_params.get("vid", [None])[0]
+		if not vid:
+			return None
+		async with httpx.AsyncClient(timeout=5.0) as client:
+			resp = await client.post(
+				"https://api.turkuazz.vip/v1/info/getfile_name",
+				json={"weburl": vid}
+			)
+			if resp.status_code == 200:
+				data = resp.json()
+				if isinstance(data, list) and len(data) >= 2:
+					return {"filename": data[0], "uploader_id": data[1]}
+		return None
+	except:
+		print_exc()
+		return None
+
+def add_to_history(roomid: str, user: str, url: str, success: bool):
+	conn = get_db_connection()
+	if not conn:
+		return None
+	cursor = None
+	try:
+		cursor = conn.cursor()
+		cursor.execute(
+			"INSERT INTO room_history (roomid, user, link, success) VALUES (%s, %s, %s, %s)",
+			(roomid, user, url, 1 if success else 0)
+		)
+		conn.commit()
+		history_id = cursor.lastrowid
+		return {
+			"id": history_id,
+			"user": user,
+			"url": url,
+			"success": success,
+			"date": datetime.now().strftime("%Y-%m-%d %H:%M")
+		}
+	except:
+		print_exc()
+		return None
+	finally:
+		if cursor:
+			cursor.close()
+		conn.close()
+
 
 def save_subtitle(roomid, subtitle_data, filename):
 	try:
@@ -442,6 +502,24 @@ class VideoSyncApp:
 			
 		elif message_type == "update_url":
 			new_url = data.get("new_url")
+			url_valid = check_url(new_url)
+			
+			history_entry = add_to_history(roomid, user, new_url, url_valid)
+			file_info = await get_file_info(new_url)
+			if history_entry and file_info:
+				history_entry["file_info"] = file_info
+			
+			if not url_valid:
+				if request_id:
+					await websocket.send_text(dumps({
+						"type": "update_response",
+						"success": False,
+						"error": "Invalid URL",
+						"history_entry": history_entry,
+						"requestId": request_id
+					}))
+				return
+			
 			if check_ifcan_update(roomid, user, "update_url"):
 				time_data = {"user": user, "value": 0}
 				is_playing_data = {"user": user, "value": True}
@@ -455,6 +533,7 @@ class VideoSyncApp:
 					await websocket.send_text(dumps({
 						"type": "update_response",
 						"success": True,
+						"history_entry": history_entry,
 						"requestId": request_id
 					}))
 				
@@ -702,6 +781,16 @@ async def setvideourl_offline(request: Request):
 	if not checkRoom(room, roompsw):
 		logger.error(f"setvideourl_offline: Invalid room credentials for room`{room}`")
 		return {"status": False, "error": "Invalid room credentials"}
+	
+	url_valid = check_url(new_url)
+	history_entry = add_to_history(room, user, new_url, url_valid)
+	file_info = await get_file_info(new_url)
+	if history_entry and file_info:
+		history_entry["file_info"] = file_info
+	
+	if not url_valid:
+		return {"status": False, "error": "Invalid URL", "history_entry": history_entry}
+	
 	player_status = get_player_status(room)
 	time_data = {"user": user, "value": 0}
 	is_playing_data = {"user": user, "value": True}
@@ -720,4 +809,4 @@ async def setvideourl_offline(request: Request):
 		"is_playing": True,
 		"subtitle_exist": False
 	})
-	return {"status": True}
+	return {"status": True, "history_entry": history_entry}

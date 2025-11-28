@@ -1018,7 +1018,7 @@ const checkVideoUrl = async (url) => {
 		try {
 			const _streamUrl = await youtubedl(url, {
 				getUrl: true,
-				format: 'bv[height=1080]+ba',
+				format: "best",
 				noCheckCertificates: true,
 				noPlaylist: true,
 			})
@@ -1098,7 +1098,12 @@ const setVideoVLC = async (_url) => {
 					await new Promise(resolve => setTimeout(resolve, 250))
 					const currentUrl = await getVideoUrl_VLC()
 					if (currentUrl === url) {
-						logger.info("video changed!")
+						await axios.post(
+							`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=pl_empty`,
+							null,
+							{ auth: { username: '', password: VLC_HTTP_PASS } }
+						)
+						logger.info("video changed & posted pl_empty!")
 						return true
 					}
 					logger.info("video not changed. retrying..")
@@ -1152,6 +1157,22 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 				mainWindow.webContents.send('subtitle-status', { 
 					subtitle_exist: false 
 				})
+			}
+			
+			logger.info("setvideo-vlc result:", JSON.stringify(result))
+			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
+			logger.info("setvideo-vlc historyEntry:", JSON.stringify(historyEntry))
+			if (historyEntry) {
+				logger.info("Sending video-history-update-broadcast to renderer")
+				mainWindow.webContents.send('video-history-update-broadcast', historyEntry)
+			}
+		} else {
+			logger.info("setvideo-vlc failed result:", JSON.stringify(result))
+			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
+			logger.info("setvideo-vlc failed historyEntry:", JSON.stringify(historyEntry))
+			if (historyEntry) {
+				logger.info("Sending video-history-update-broadcast to renderer (failed case)")
+				mainWindow.webContents.send('video-history-update-broadcast', historyEntry)
 			}
 		}
 		

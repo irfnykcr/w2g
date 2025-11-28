@@ -132,15 +132,18 @@ document.addEventListener("DOMContentLoaded", () => {
 	const main = document.querySelector("main")
 	const leftPanel = document.getElementById("left-panel")
 	const urlSection = document.getElementById("url-section")
+	const historySection = document.getElementById("history-section")
 	const videoSection = document.getElementById("video-section")
 	const chatSection = document.getElementById("chat-section")
 	const urlToggleButton = document.getElementById("toggle-url-section")
+	const historyToggleButton = document.getElementById("toggle-history-section")
 	const videoToggleButton = document.getElementById("toggle-video-section")
 	const chatToggleButton = document.getElementById("toggle-chat-section")
 	const collapsedToggles = document.getElementById("collapsed-toggles")
 	const expandUrlButton = document.getElementById("expand-url")
 	const expandVideoButton = document.getElementById("expand-video")
 	const expandChatButton = document.getElementById("expand-chat")
+	const expandHistoryButton = document.getElementById("expand-history")
 	const horizontalResizer = document.getElementById("horizontal-resizer")
 	const verticalResizer = document.getElementById("vertical-resizer")
 	const mobileHorizontalResizer = document.getElementById("mobile-horizontal-resizer")
@@ -149,6 +152,7 @@ document.addEventListener("DOMContentLoaded", () => {
 	const closeWatchersSectionButton = document.getElementById("close-watchers-section")
 
 	let isUrlExpanded = true
+	let isHistoryExpanded = false
 	let isChatExpanded = true
 	let isVideoExpanded = false
 	let isInlineMode = false
@@ -326,6 +330,68 @@ document.addEventListener("DOMContentLoaded", () => {
 
 	setupInlineVideoSync()
 
+	const renderHistoryList = (historyData) => {
+		const historyList = document.getElementById("history-list")
+		if (!historyList) return
+
+		historyList.innerHTML = ""
+		if (!historyData || historyData.length === 0) {
+			historyList.innerHTML = '<li class="text-gray-500 text-sm p-3">No video history yet</li>'
+			return
+		}
+
+		historyData.forEach(item => {
+			const li = document.createElement("li")
+			li.className = "bg-dark-bg hover:bg-dark-hover rounded-md p-3 transition-colors duration-200 flex items-center justify-between"
+			li.dataset.historyId = item.id
+			const statusClass = item.success ? "text-green-400" : "text-red-400"
+			const statusIcon = item.success ? "✓" : "✗"
+			const displayText = item.file_info && item.file_info.filename ? item.file_info.filename : item.url
+			const urlTitle = item.file_info && item.file_info.filename ? item.url : ""
+			li.innerHTML = `
+				<div class="flex-1 min-w-0 select-text">
+					<p class="text-sm sm:text-base font-medium text-white truncate" title="${displayText}">${displayText}</p>
+					${urlTitle ? `<p class="text-xs text-gray-400 mt-1">${urlTitle}</p>` : ""}
+					<p class="text-xs text-gray-400 mt-1">${item.date} | by: ${item.user} <span class="${statusClass}">${statusIcon}</span></p>
+				</div>
+				<button class="ml-4 bg-turkuazz text-dark-bg font-bold py-2 px-4 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base history-use-btn">
+					>
+				</button>
+			`
+			const useBtn = li.querySelector(".history-use-btn")
+			useBtn.addEventListener("click", () => {
+				if (videourl) videourl.value = item.url
+			})
+			historyList.appendChild(li)
+		})
+	}
+
+	let videoHistoryData = []
+
+	window.handleVideoHistory = (history) => {
+		videoHistoryData = history || []
+		renderHistoryList(videoHistoryData)
+	}
+
+	window.handleVideoHistoryUpdate = (entry) => {
+		if (!entry) return
+		videoHistoryData.unshift(entry)
+		if (videoHistoryData.length > 10) {
+			videoHistoryData.pop()
+		}
+		renderHistoryList(videoHistoryData)
+	}
+
+	window.electronAPI.onVideoHistoryUpdateBroadcast((entry) => {
+		loggerIndex.info("Received video-history-update-broadcast:", entry)
+		if (window.sendVideoHistoryUpdate) {
+			loggerIndex.info("Calling sendVideoHistoryUpdate")
+			window.sendVideoHistoryUpdate(entry)
+		} else {
+			loggerIndex.warn("sendVideoHistoryUpdate not available")
+		}
+	})
+
 	function startResize(e, type) {
 		e.preventDefault()
 		if (e.touches && e.touches.length > 1) return
@@ -394,62 +460,64 @@ document.addEventListener("DOMContentLoaded", () => {
 	document.ontouchend = stopResize
 
 	function updateLayout() {
-		const hasCollapsed = !isUrlExpanded || !isVideoExpanded || !isChatExpanded
+		const hasCollapsed = !isUrlExpanded || !isHistoryExpanded || !isVideoExpanded || !isChatExpanded
+
+		if (urlSection) urlSection.style.display = isUrlExpanded ? "flex" : "none"
+		if (historySection) historySection.style.display = isHistoryExpanded ? "flex" : "none"
+		if (videoSection) videoSection.style.display = (isVideoExpanded && isInlineMode) ? "flex" : "none"
+		if (chatSection) chatSection.style.display = isChatExpanded ? "flex" : "none"
 
 		if (hasCollapsed && collapsedToggles) {
 			collapsedToggles.classList.remove("hidden")
 			if (expandUrlButton) expandUrlButton.classList.toggle("hidden", isUrlExpanded)
+			if (expandHistoryButton) expandHistoryButton.classList.toggle("hidden", isHistoryExpanded)
 			if (expandVideoButton) expandVideoButton.classList.toggle("hidden", isVideoExpanded || !isInlineMode)
 			if (expandChatButton) expandChatButton.classList.toggle("hidden", isChatExpanded)
 		} else if (collapsedToggles) {
 			collapsedToggles.classList.add("hidden")
 			if (expandUrlButton) expandUrlButton.classList.add("hidden")
+			if (expandHistoryButton) expandHistoryButton.classList.add("hidden")
 			if (expandVideoButton) expandVideoButton.classList.add("hidden")
 			if (expandChatButton) expandChatButton.classList.add("hidden")
 		}
 
-		if (isInlineMode) {
-			const openLeftSections = [isUrlExpanded, isVideoExpanded].filter(Boolean).length
-			const leftPanelVisible = openLeftSections > 0
-			
-			if (leftPanelVisible && isChatExpanded) {
-				if (leftPanel) leftPanel.style.flex = "1"
-				if (chatSection) chatSection.style.flex = "1"
-			} else if (leftPanelVisible) {
-				if (leftPanel) leftPanel.style.flex = "1"
-				if (chatSection) chatSection.style.flex = "0"
-			} else if (isChatExpanded) {
-				if (leftPanel) leftPanel.style.flex = "0"
-				if (chatSection) chatSection.style.flex = "1"
-			}
-		} else {
-			if (isUrlExpanded && isChatExpanded) {
-				if (leftPanel) leftPanel.style.flex = "1"
-				if (chatSection) chatSection.style.flex = "1"
-			} else if (isUrlExpanded) {
-				if (leftPanel) leftPanel.style.flex = "1"
-				if (chatSection) chatSection.style.flex = "0"
-			} else if (isChatExpanded) {
-				if (leftPanel) leftPanel.style.flex = "0"
-				if (chatSection) chatSection.style.flex = "1"
-			}
+		const openLeftSections = [isUrlExpanded, isHistoryExpanded, (isVideoExpanded && isInlineMode)].filter(Boolean).length
+		const leftPanelVisible = openLeftSections > 0
+		if (leftPanel) leftPanel.style.display = leftPanelVisible ? "flex" : "none"
+
+		if (leftPanelVisible && isChatExpanded) {
+			if (leftPanel) leftPanel.style.flex = "1"
+			if (chatSection) chatSection.style.flex = "1"
+		} else if (leftPanelVisible) {
+			if (leftPanel) leftPanel.style.flex = "1"
+			if (chatSection) chatSection.style.flex = "0"
+		} else if (isChatExpanded) {
+			if (leftPanel) leftPanel.style.flex = "0"
+			if (chatSection) chatSection.style.flex = "1"
 		}
 
+		const showHorizontalResizer = (isUrlExpanded || isHistoryExpanded) && isVideoExpanded && isInlineMode
 		if (horizontalResizer) {
-			horizontalResizer.style.display = (isUrlExpanded && isVideoExpanded && isInlineMode) ? "block" : "none"
+			horizontalResizer.style.display = showHorizontalResizer ? "block" : "none"
 		}
 		if (verticalResizer) {
-			verticalResizer.style.display = ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded) ? "block" : "none"
+			verticalResizer.style.display = (leftPanelVisible && isChatExpanded) ? "block" : "none"
 		}
 		if (mobileHorizontalResizer) {
-			mobileHorizontalResizer.style.display = (isMobile() && ((isUrlExpanded || (isVideoExpanded && isInlineMode)) && isChatExpanded)) ? "block" : "none"
+			mobileHorizontalResizer.style.display = (isMobile() && leftPanelVisible && isChatExpanded) ? "block" : "none"
 		}
 	}
 
 	if (urlToggleButton) {
 		urlToggleButton.addEventListener("click", () => {
 			isUrlExpanded = false
-			if (urlSection) urlSection.style.display = "none"
+			updateLayout()
+		})
+	}
+
+	if (historyToggleButton) {
+		historyToggleButton.addEventListener("click", () => {
+			isHistoryExpanded = false
 			updateLayout()
 		})
 	}
@@ -457,7 +525,6 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (videoToggleButton) {
 		videoToggleButton.addEventListener("click", () => {
 			isVideoExpanded = false
-			if (videoSection) videoSection.style.display = "none"
 			updateLayout()
 		})
 	}
@@ -465,7 +532,6 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (chatToggleButton) {
 		chatToggleButton.addEventListener("click", () => {
 			isChatExpanded = false
-			if (chatSection) chatSection.style.display = "none"
 			updateLayout()
 		})
 	}
@@ -473,7 +539,13 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (expandUrlButton) {
 		expandUrlButton.addEventListener("click", () => {
 			isUrlExpanded = true
-			if (urlSection) urlSection.style.display = "flex"
+			updateLayout()
+		})
+	}
+
+	if (expandHistoryButton) {
+		expandHistoryButton.addEventListener("click", () => {
+			isHistoryExpanded = true
 			updateLayout()
 		})
 	}
@@ -481,7 +553,6 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (expandVideoButton) {
 		expandVideoButton.addEventListener("click", () => {
 			isVideoExpanded = true
-			if (videoSection) videoSection.style.display = "flex"
 			updateLayout()
 		})
 	}
@@ -489,7 +560,6 @@ document.addEventListener("DOMContentLoaded", () => {
 	if (expandChatButton) {
 		expandChatButton.addEventListener("click", () => {
 			isChatExpanded = true
-			if (chatSection) chatSection.style.display = "flex"
 			updateLayout()
 		})
 	}

@@ -16,7 +16,8 @@
 	</header>
 	
 	<!-- toggle sections -->
-	<div id="collapsed-toggles" class="flex justify-center gap-4 p-2 bg-dark-bg border-b border-gray-700 hidden">
+	<!-- TODO: i hate these emojies -->
+	<div id="collapsed-toggles" class="flex justify-center gap-4 p-2 bg-dark-bg border-b border-gray-700 select-none hidden">
 		<button id="expand-url" class="bg-dark-card hover:bg-dark-hover text-turkuazz px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium hidden">
 			📹 Show Video Section
 		</button>
@@ -26,100 +27,129 @@
 		<button id="expand-chat" class="bg-dark-card hover:bg-dark-hover text-turkuazz px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium hidden">
 			💬 Show Chat Section
 		</button>
+		<button id="expand-history" class="bg-dark-card hover:bg-dark-hover text-turkuazz px-4 py-2 rounded-md transition-all duration-200 text-sm font-medium hidden">
+			📜 Show History
+		</button>
 	</div>
 	
 	<!-- main content -->
 	<main class="flex flex-1 p-3 sm:p-6 overflow-hidden gap-3 sm:gap-6 flex-col sm:flex-row min-h-0" style="display: flex;">
 		<!-- left panel container -->
-		<div id="left-panel" class="flex flex-col gap-3 sm:gap-6 min-h-0 overflow-hidden" style="flex: 1; display: flex;">
+		<div id="left-panel" class="flex flex-col gap-3 sm:gap-6 min-h-0 overflow-hidden select-none" style="flex: 1; display: flex;">
 			<!-- video input url section -->
 			<section id="url-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden" style="flex: 1; display: flex;">
 				<button id="toggle-url-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
 					&times;
 				</button>
 				<div id="url-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
-				<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Watch Video</h2>
-				<div class="relative">
-					<!-- loading overlay for input/buttons area only -->
-					<div id="video-loading-overlay" class="absolute inset-0 bg-dark-card bg-opacity-90 flex flex-col items-center justify-center z-20 rounded-md hidden">
-						<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-turkuazz mb-3"></div>
-						<p class="text-turkuazz font-medium text-center text-sm">
-							<span id="loading-text">Setting up video...</span>
-						</p>
-						<p class="text-gray-400 text-xs text-center mt-1">
-							This may take a moment
-						</p>
-					</div>
-					<div class="flex flex-col gap-4">
-						<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-							<input
-								id="urlof-thevideo"
-								type="text"
-								placeholder="Enter video URL"
-								class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+					<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Watch Video</h2>
+					<div class="relative">
+						<!-- loading overlay for input/buttons area only -->
+						<div id="video-loading-overlay" class="absolute inset-0 bg-dark-card bg-opacity-90 flex flex-col items-center justify-center z-20 rounded-md hidden">
+							<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-turkuazz mb-3"></div>
+							<p class="text-turkuazz font-medium text-center text-sm">
+								<span id="loading-text">Setting up video...</span>
+							</p>
+							<p class="text-gray-400 text-xs text-center mt-1">
+								This may take a moment
+							</p>
+						</div>
+						<div class="flex flex-col gap-4">
+							<div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+								<input
+									id="urlof-thevideo"
+									type="text"
+									placeholder="Enter video URL"
+									class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+								/>
+								<button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-3 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+									set video
+								</button>
+							</div>
+							<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
+							watch video
+						</button>
+						<div class="flex flex-col sm:flex-row gap-2">
+							<input 
+								id="subtitle-file" 
+								type="file" 
+								accept=".vtt,.srt,.ass,.ssa,.sub" 
+								class="hidden"
 							/>
-							<button id="set-thevideo" class="bg-turkuazz text-dark-bg font-bold py-3 px-3 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
-								set video
+							<button id="add-subtitle" class="flex-1 bg-gray-700 text-white font-medium py-2 px-4 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base flex items-center justify-center gap-2">
+								<i class="fas fa-closed-captioning"></i>
+								Add Subtitle
+							</button>
+							<button id="update-subtitle" class="hidden flex-1 bg-gray-700 text-white font-medium py-2 px-4 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base flex items-center justify-center gap-2">
+								<i class="fas fa-sync-alt"></i>
+								Update Subtitle
 							</button>
 						</div>
-						<button id="play-thevideo" class="w-full bg-turkuazz text-dark-bg font-bold py-3 rounded-md hover:bg-opacity-90 transition-colors text-sm sm:text-base">
-						watch video
-					</button>
-					<div class="flex flex-col sm:flex-row gap-2">
-						<input 
-							id="subtitle-file" 
-							type="file" 
-							accept=".vtt,.srt,.ass,.ssa,.sub" 
-							class="hidden"
-						/>
-						<button id="add-subtitle" class="flex-1 bg-gray-700 text-white font-medium py-2 px-4 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base flex items-center justify-center gap-2">
-							<i class="fas fa-closed-captioning"></i>
-							Add Subtitle
-						</button>
-						<button id="update-subtitle" class="hidden flex-1 bg-gray-700 text-white font-medium py-2 px-4 rounded-md hover:bg-gray-600 transition-colors text-sm sm:text-base flex items-center justify-center gap-2">
-							<i class="fas fa-sync-alt"></i>
-							Update Subtitle
-						</button>
 					</div>
 				</div>
-			</div>
-		</section>		<!-- horizontal resizer -->
-		<div id="horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
+			</section>
 
-		<!-- video player section -->
-		<section id="video-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden" style="flex: 1; display: none;">
-			<button id="toggle-video-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
-				&times;
-			</button>
-			<div id="video-content" class="p-1 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
-				<h2 class="p-2 text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Video Player</h2>
-				<div class="flex-1 flex items-center justify-center min-h-0">
-					<video
-						id="video-player"
-						class="w-full h-full max-w-full max-h-full rounded-lg"
-						controls
-						src=""
-					>
-						Your browser does not support the video tag.
-					</video>
+			<!-- history section -->
+			<section id="history-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden" style="flex: 1; display: flex;">
+				<button id="toggle-history-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
+					&times;
+				</button>
+				<div id="history-content" class="p-4 sm:p-6 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
+					<h2 id="input-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Video History</h2>
+					<div class="relative">
+						<ul id="history-list" class="space-y-3">
+							<!-- dynamic -->
+							<!-- <li class="bg-dark-bg hover:bg-dark-hover rounded-md p-3 transition-colors duration-200 flex items-center justify-between">
+								<div class="flex-1 min-w-0">
+									<p class="text-sm sm:text-base font-medium text-white truncate">https://cdn.turkuazz.vip?vid=123</p>
+									<p class="text-xs text-gray-400 mt-1">2024-06-01 14:30 | by: helix</p>
+								</div>
+								<button class="ml-4 bg-turkuazz text-dark-bg font-bold py-2 px-4 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+									>
+								</button>
+							</li> -->
+						</ul>
+					</div>
 				</div>
-			</div>
-		</section>
-	</div>
+			</section>
+			
+			<!-- horizontal resizer -->
+			<div id="horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
-	<!-- vertical resizer -->
-	<div id="vertical-resizer" class="resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200" style="width: 6px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
+			<!-- video player section -->
+			<section id="video-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden select-none" style="flex: 1; display: none;">
+				<button id="toggle-video-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
+					&times;
+				</button>
+				<div id="video-content" class="p-1 flex flex-col transition-all duration-300 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-dark-bg">
+					<h2 class="p-2 text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Video Player</h2>
+					<div class="flex-1 flex items-center justify-center min-h-0">
+						<video
+							id="video-player"
+							class="w-full h-full max-w-full max-h-full rounded-lg"
+							controls
+							src=""
+						>
+							Your browser does not support the video tag.
+						</video>
+					</div>
+				</div>
+			</section>
+		</div>
 
-	<!-- horizontal resizer for mobile (above chat) -->
-	<div id="mobile-horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 sm:hidden" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
+		<!-- vertical resizer -->
+		<div id="vertical-resizer" class="resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200" style="width: 6px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
+
+		<!-- horizontal resizer for mobile (above chat) -->
+		<div id="mobile-horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 sm:hidden" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- chat section -->
 		<section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden flex-1 min-h-0" style="flex: 1; display: flex;">
-			<button id="toggle-chat-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
+			<button id="toggle-chat-section" class="select-none absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
 				&times;
 			</button>
 			
-			<div class="p-4 pb-0 flex-shrink-0">
+			<div class="p-4 pb-0 flex-shrink-0 select-none">
 				<h2 id="chat-roomname" class="text-xl sm:text-2xl font-bold text-turkuazz mb-4 pr-10 sm:pr-12">Chat</h2>
 			</div>
 			
@@ -210,7 +240,7 @@
 	</main>
 
 	<!-- bottom watchers section -->
-	<section id="watchers-section" class="bg-dark-card border-t border-gray-600 transition-all duration-300 transform translate-y-full">
+	<section id="watchers-section" class="bg-dark-card border-t border-gray-600 transition-all duration-300 transform translate-y-full select-none">
 		<div class="p-3 sm:p-4 flex items-center gap-3">
 			<div id="watchers-list" class="flex gap-2 flex-1 overflow-x-auto scrollbar-thin scrollbar-thumb-turkuazz scrollbar-track-gray-700 min-w-0">
 				<div class="text-gray-500 text-sm no-watchers-message">No one is watching</div>

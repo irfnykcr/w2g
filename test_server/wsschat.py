@@ -11,6 +11,8 @@ from bcrypt import checkpw
 from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv
+from urllib.parse import urlparse, parse_qs
+import httpx
 load_dotenv()
 
 logging.basicConfig(
@@ -84,6 +86,63 @@ def checkRoom(roomid: str, roompsw: str):
 	except:
 		print_exc()
 		return False
+	finally:
+		if cursor:
+			cursor.close()
+		conn.close()
+
+async def get_file_info(url: str):
+	try:
+		parsed = urlparse(url)
+		if parsed.netloc != "cdn.turkuazz.vip":
+			return None
+		query_params = parse_qs(parsed.query)
+		vid = query_params.get("vid", [None])[0]
+		if not vid:
+			return None
+		async with httpx.AsyncClient(timeout=5.0) as client:
+			resp = await client.post(
+				"https://api.turkuazz.vip/v1/info/getfile_name",
+				json={"weburl": vid}
+			)
+			if resp.status_code == 200:
+				data = resp.json()
+				if isinstance(data, list) and len(data) >= 2:
+					return {"filename": data[0], "uploader_id": data[1]}
+		return None
+	except:
+		print_exc()
+		return None
+
+async def get_video_history(roomid: str, limit: int = 15):
+	conn = get_db_connection()
+	if not conn:
+		return []
+	cursor = None
+	try:
+		cursor = conn.cursor()
+		cursor.execute(
+			"SELECT id, user, link, success, created_at FROM room_history WHERE roomid = %s ORDER BY id DESC LIMIT %s",
+			(roomid, limit)
+		)
+		results = cursor.fetchall()
+		history = []
+		for row in results:
+			entry = {
+				"id": row[0],
+				"user": row[1],
+				"url": row[2],
+				"success": bool(row[3]),
+				"date": row[4].strftime("%Y-%m-%d %H:%M") if row[4] else ""
+			}
+			file_info = await get_file_info(row[2])
+			if file_info:
+				entry["file_info"] = file_info
+			history.append(entry)
+		return history
+	except:
+		print_exc()
+		return []
 	finally:
 		if cursor:
 			cursor.close()
@@ -251,6 +310,34 @@ class ChatApp:
 					print_exc()
 					logger.error(f"Error sending watchers update to {user_data['username']}")
 
+	async def send_video_history_to_websocket(self, websocket: WebSocket, roomid: str):
+		history = await get_video_history(roomid)
+		try:
+			if self.is_websocket_connected(websocket):
+				await websocket.send_text(dumps({
+					"type": "video_history",
+					"history": history
+				}))
+		except:
+			print_exc()
+
+	async def broadcast_video_history_update(self, roomid: str, entry: dict):
+		logger.info(f"broadcast_video_history_update: roomid`{roomid}` entry`{entry}`")
+		if roomid not in self.active_rooms:
+			logger.warn(f"broadcast_video_history_update: room not active")
+			return
+		data = {
+			"type": "video_history_update",
+			"entry": entry
+		}
+		for user_data in self.active_rooms[roomid]:
+			websocket = user_data["websocket"]
+			try:
+				if self.is_websocket_connected(websocket):
+					await websocket.send_text(dumps(data))
+			except:
+				print_exc()
+
 	async def handle_connect(self, websocket: WebSocket, user: str, roomid: str, lastMessageDate: float):
 		if roomid not in self.active_rooms:
 			self.active_rooms[roomid] = []
@@ -306,6 +393,7 @@ class ChatApp:
 			await self.send_history_to_websocket(websocket, roomid, lastMessageDate)
 		else:
 			await self.send_history_to_websocket(websocket, roomid, limit=15)
+		await self.send_video_history_to_websocket(websocket, roomid)
 		if not was_reconnect and not recently_left:
 			await self.send_message_to_room(roomid, f"{user} joined.", no_history=True)
 			logger.debug(f"join broadcast: user`{user}` roomid`{roomid}`")
@@ -360,6 +448,13 @@ class ChatApp:
 			return
 		elif data.get("type") == "load_more_messages":
 			await self.handle_load_more_messages(websocket, data)
+			return
+		elif data.get("type") == "video_history_update":
+			roomid = self.get_room_from_websocket(websocket)
+			entry = data.get("entry")
+			logger.info(f"video_history_update received: roomid`{roomid}` entry`{entry}`")
+			if roomid and entry:
+				await self.broadcast_video_history_update(roomid, entry)
 			return
 			
 		message = data.get("message")
@@ -875,7 +970,7 @@ async def websocket_endpoint(
 							print_exc()
 						continue
 
-					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong"]:
+					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong", "video_history_update"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					try:

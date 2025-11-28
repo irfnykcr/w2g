@@ -82,6 +82,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 			callback(data)
 		})
 	},
+
+	onVideoHistoryUpdateBroadcast: (callback) => {
+		ipcRenderer.on('video-history-update-broadcast', (_, data) => {
+			callback(data)
+		})
+	},
 	
 	onVideoSyncStatus: (callback) => {
 		ipcRenderer.on('video-sync-status', (_, data) => {
