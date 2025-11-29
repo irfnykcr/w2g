@@ -13,8 +13,6 @@ from atexit import register
 from base64 import b64decode, b64encode
 import logging
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
-import httpx
 load_dotenv()
 
 logging.basicConfig(
@@ -50,30 +48,6 @@ def check_url(url: str): # probably should add more checks
 	if url.startswith("https://"):
 		return True
 	return False
-
-async def get_file_info(url: str):
-	try:
-		parsed = urlparse(url)
-		if parsed.netloc != "cdn.turkuazz.vip":
-			return None
-		from urllib.parse import parse_qs
-		query_params = parse_qs(parsed.query)
-		vid = query_params.get("vid", [None])[0]
-		if not vid:
-			return None
-		async with httpx.AsyncClient(timeout=5.0) as client:
-			resp = await client.post(
-				"https://api.turkuazz.vip/v1/info/getfile_name",
-				json={"weburl": vid}
-			)
-			if resp.status_code == 200:
-				data = resp.json()
-				if isinstance(data, list) and len(data) >= 2:
-					return {"filename": data[0], "uploader_id": data[1]}
-		return None
-	except:
-		print_exc()
-		return None
 
 def add_to_history(roomid: str, user: str, url: str, success: bool):
 	conn = get_db_connection()
@@ -505,9 +479,6 @@ class VideoSyncApp:
 			url_valid = check_url(new_url)
 			
 			history_entry = add_to_history(roomid, user, new_url, url_valid)
-			file_info = await get_file_info(new_url)
-			if history_entry and file_info:
-				history_entry["file_info"] = file_info
 			
 			if not url_valid:
 				if request_id:
@@ -764,6 +735,19 @@ async def login_room(request: Request):
 	logger.info(f"login_room: room`{room}`")
 	return {"status": checkRoom(room, psw)}
 
+@app.post('/get_current_url')
+async def get_current_url(request: Request):
+	data = await request.json()
+	room = str(data.get("room", "") or "")
+	roompsw = str(data.get("roompsw", "") or "")
+	if not (room and roompsw):
+		return {"status": False, "error": "Missing parameters"}
+	if not checkRoom(room, roompsw):
+		return {"status": False, "error": "Invalid room"}
+	player_status = get_player_status(room)
+	url = player_status.get("url", {}).get("value", "")
+	return {"status": True, "url": url}
+
 @app.post('/setvideourl_offline')
 async def setvideourl_offline(request: Request):
 	data = await request.json()
@@ -784,9 +768,6 @@ async def setvideourl_offline(request: Request):
 	
 	url_valid = check_url(new_url)
 	history_entry = add_to_history(room, user, new_url, url_valid)
-	file_info = await get_file_info(new_url)
-	if history_entry and file_info:
-		history_entry["file_info"] = file_info
 	
 	if not url_valid:
 		return {"status": False, "error": "Invalid URL", "history_entry": history_entry}

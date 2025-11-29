@@ -330,7 +330,34 @@ document.addEventListener("DOMContentLoaded", () => {
 
 	setupInlineVideoSync()
 
-	const renderHistoryList = (historyData) => {
+	const fileInfoCache = new Map()
+
+	async function getFileInfo(url) {
+		if (fileInfoCache.has(url)) return fileInfoCache.get(url)
+		try {
+			const urlObj = new URL(url)
+			if (urlObj.hostname !== "cdn.turkuazz.vip") return null
+			const vid = urlObj.searchParams.get("vid")
+			if (!vid) return null
+			const resp = await fetch("https://api.turkuazz.vip/v1/info/getfile_name", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ weburl: vid })
+			})
+			if (resp.ok) {
+				const data = await resp.json()
+				if (Array.isArray(data) && data.length >= 2) {
+					const info = { filename: data[0], uploader_id: data[1] }
+					fileInfoCache.set(url, info)
+					return info
+				}
+			}
+		} catch (e) {}
+		fileInfoCache.set(url, null)
+		return null
+	}
+
+	const renderHistoryList = async (historyData) => {
 		const historyList = document.getElementById("history-list")
 		if (!historyList) return
 
@@ -340,14 +367,19 @@ document.addEventListener("DOMContentLoaded", () => {
 			return
 		}
 
-		historyData.forEach(item => {
+		for (const item of historyData) {
 			const li = document.createElement("li")
 			li.className = "bg-dark-bg hover:bg-dark-hover rounded-md p-3 transition-colors duration-200 flex items-center justify-between"
 			li.dataset.historyId = item.id
 			const statusClass = item.success ? "text-green-400" : "text-red-400"
 			const statusIcon = item.success ? "✓" : "✗"
-			const displayText = item.file_info && item.file_info.filename ? item.file_info.filename : item.url
-			const urlTitle = item.file_info && item.file_info.filename ? item.url : ""
+			let displayText = item.url
+			let urlTitle = ""
+			const fileInfo = await getFileInfo(item.url)
+			if (fileInfo && fileInfo.filename) {
+				displayText = fileInfo.filename
+				urlTitle = item.url
+			}
 			li.innerHTML = `
 				<div class="flex-1 min-w-0 select-text">
 					<p class="text-sm sm:text-base font-medium text-white truncate" title="${displayText}">${displayText}</p>
@@ -363,7 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
 				if (videourl) videourl.value = item.url
 			})
 			historyList.appendChild(li)
-		})
+		}
 	}
 
 	let videoHistoryData = []

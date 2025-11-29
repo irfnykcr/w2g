@@ -354,7 +354,7 @@ ipcMain.handle('logout-user', async (event) => {
 let mainWindow
 let proc_vlc
 let isVLCwatching = false
-let currentVLCStatus = { status: 'stopped', isPlaying: false }
+let currentVLCStatus = { status: 'stopped', isPlaying: false, url: null }
 let vlcInterval
 let serverInterval
 let inlineVideoInterval
@@ -451,7 +451,8 @@ function sendVideoStatus(status, additionalData = {}) {
 				status: status.status,
 				isPlaying: status.isPlaying,
 				current_time: additionalData.currentTime || 0,
-				is_uptodate: additionalData.isUpToDate || false
+				is_uptodate: additionalData.isUpToDate || false,
+				url: currentVLCStatus.url
 			}
 		}
 		return true
@@ -698,7 +699,7 @@ const handleVideoSyncMessage = async (message) => {
 		pendingWsRequests.delete(requestId)
 		
 		if (type === 'update_response') {
-			resolve({ status: message.success, error: message.error })
+			resolve({ status: message.success, error: message.error, history_entry: message.history_entry })
 		} else if (type === 'playerstatus_response') {
 			resolve({ status: true, data: message.data })
 		} else {
@@ -727,6 +728,7 @@ const handleVideoSyncMessage = async (message) => {
 	}
 	else if (type === 'url_updated') {
 		logger.info("Server video URL updated:", message.url)
+		currentVLCStatus.url = message.url
 		if (message.user !== USERID) {
 			isClientUpToDate = false
 			
@@ -1081,6 +1083,13 @@ const setVideoVLC = async (_url) => {
 				return await openwithabort()
 			}
 
+			// clear playlist
+			await axios.post(
+				`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=pl_empty`,
+				null,
+				{ auth: { username: '', password: VLC_HTTP_PASS } }
+			)
+
 			const maxTries = 10
 			let tried = 0
 			while (tried <= maxTries) {
@@ -1098,11 +1107,6 @@ const setVideoVLC = async (_url) => {
 					await new Promise(resolve => setTimeout(resolve, 250))
 					const currentUrl = await getVideoUrl_VLC()
 					if (currentUrl === url) {
-						await axios.post(
-							`http://127.0.0.1:${VLC_PORT}/requests/status.json?command=pl_empty`,
-							null,
-							{ auth: { username: '', password: VLC_HTTP_PASS } }
-						)
 						logger.info("video changed & posted pl_empty!")
 						return true
 					}
@@ -1127,10 +1131,31 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		if (typeof url !== 'string' || !url.trim()) {
 			throw new Error('Invalid URL provided')
 		}
-		logger.info("update_url", url)
+		url = url.trim()
 		
+		if (currentVLCStatus.url === url) {
+			logger.info("Same video URL (cached), skipping update")
+			return true
+		}
+		
+		if (!currentVLCStatus.url) {
+			const r = await axios.post(
+				`https://${SERVER_ENDPOINT}/get_current_url`,
+				{
+					room: ROOMID,
+					roompsw: await secureStorage.getPassword("turkuazz", "roompsw")
+				},
+				{ timeout: 2000 }
+			)
+			if (r.data && r.data.status && r.data.url === url) {
+				currentVLCStatus.url = url
+				logger.info("Same video URL (http), skipping update")
+				return true
+			}
+		}
+		
+		logger.info("update_url", url)
 		subtitleCache.clear()
-		logger.info("Cleared subtitle cache - new video set")
 		
 		let result = { status: false }
 		if (videoSyncWS && videoSyncWS.readyState === WebSocket.OPEN) {
@@ -1151,6 +1176,7 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		}
 		
 		if (result.status) {
+			currentVLCStatus.url = url
 			await setVideoVLC(url)
 			
 			if (mainWindow && mainWindow.webContents) {
@@ -1159,7 +1185,6 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 				})
 			}
 			
-			logger.info("setvideo-vlc result:", JSON.stringify(result))
 			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
 			logger.info("setvideo-vlc historyEntry:", JSON.stringify(historyEntry))
 			if (historyEntry) {
@@ -1167,7 +1192,6 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 				mainWindow.webContents.send('video-history-update-broadcast', historyEntry)
 			}
 		} else {
-			logger.info("setvideo-vlc failed result:", JSON.stringify(result))
 			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
 			logger.info("setvideo-vlc failed historyEntry:", JSON.stringify(historyEntry))
 			if (historyEntry) {
@@ -1360,6 +1384,7 @@ const startVideoInline = async () => {
 		return false
 	}
 	
+	lastSetVideoUrl = r.data.url.value
 	mainWindow.webContents.send('inline-video-start', {
 		url: r.data.url.value,
 		time: r.data.time.value,
@@ -1590,6 +1615,7 @@ const openVLC = async () => {
 			let CURRENT_VIDEO_SERVER = r.data.url.value
 			const SERVER_IS_PLAYING = r.data.is_playing.value
 			const SERVER_TIME = r.data.time.value
+			lastSetVideoUrl = CURRENT_VIDEO_SERVER
 			
 			let VLC_ARGS = [
 				`--intf`, `qt`,

@@ -11,8 +11,6 @@ from bcrypt import checkpw
 from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv
-from urllib.parse import urlparse, parse_qs
-import httpx
 load_dotenv()
 
 logging.basicConfig(
@@ -91,29 +89,6 @@ def checkRoom(roomid: str, roompsw: str):
 			cursor.close()
 		conn.close()
 
-async def get_file_info(url: str):
-	try:
-		parsed = urlparse(url)
-		if parsed.netloc != "cdn.turkuazz.vip":
-			return None
-		query_params = parse_qs(parsed.query)
-		vid = query_params.get("vid", [None])[0]
-		if not vid:
-			return None
-		async with httpx.AsyncClient(timeout=5.0) as client:
-			resp = await client.post(
-				"https://api.turkuazz.vip/v1/info/getfile_name",
-				json={"weburl": vid}
-			)
-			if resp.status_code == 200:
-				data = resp.json()
-				if isinstance(data, list) and len(data) >= 2:
-					return {"filename": data[0], "uploader_id": data[1]}
-		return None
-	except:
-		print_exc()
-		return None
-
 async def get_video_history(roomid: str, limit: int = 15):
 	conn = get_db_connection()
 	if not conn:
@@ -135,9 +110,6 @@ async def get_video_history(roomid: str, limit: int = 15):
 				"success": bool(row[3]),
 				"date": row[4].strftime("%Y-%m-%d %H:%M") if row[4] else ""
 			}
-			file_info = await get_file_info(row[2])
-			if file_info:
-				entry["file_info"] = file_info
 			history.append(entry)
 		return history
 	except:
@@ -155,6 +127,8 @@ class ChatApp:
 		self.active_rooms = {}
 		# {roomid: [{"username": username, "imageurl": imageurl}]}
 		self.room_watchers = {}
+		# {roomid: {username: timestamp}}
+		self.typing_users = {}
 		self.disconnect_tasks = {}
 		self.presence_grace_seconds = 5
 		self.keepalive_tasks = {}
@@ -456,6 +430,12 @@ class ChatApp:
 			if roomid and entry:
 				await self.broadcast_video_history_update(roomid, entry)
 			return
+		elif data.get("type") == "typing_start":
+			await self.handle_typing(websocket, True)
+			return
+		elif data.get("type") == "typing_stop":
+			await self.handle_typing(websocket, False)
+			return
 			
 		message = data.get("message")
 		reply_to = data.get("reply_to")
@@ -470,6 +450,35 @@ class ChatApp:
 			await self.send_message_to_websocket(websocket, "User not found.")
 			return
 		await self.send_message_to_room(roomid, message, sender=user, reply_to_id=reply_to)
+
+	async def handle_typing(self, websocket: WebSocket, is_typing: bool):
+		user = self.get_user_from_websocket(websocket)
+		roomid = self.get_room_from_websocket(websocket)
+		if not roomid or not user:
+			return
+		if roomid not in self.typing_users:
+			self.typing_users[roomid] = {}
+		if is_typing:
+			self.typing_users[roomid][user] = time()
+		else:
+			self.typing_users[roomid].pop(user, None)
+		await self.broadcast_typing_status(roomid, user)
+
+	async def broadcast_typing_status(self, roomid: str, exclude_user: str):
+		if roomid not in self.typing_users:
+			return
+		now = time()
+		active_typers = [u for u, t in self.typing_users[roomid].items() if now - t < 10]
+		self.typing_users[roomid] = {u: t for u, t in self.typing_users[roomid].items() if now - t < 10}
+		for user_data in self.active_rooms.get(roomid, []):
+			if user_data["username"] != exclude_user:
+				try:
+					await user_data["websocket"].send_text(dumps({
+						"type": "typing_status",
+						"users": [u for u in active_typers if u != user_data["username"]]
+					}))
+				except:
+					pass
 
 	async def handle_load_more_messages(self, websocket: WebSocket, data):
 		user = self.get_user_from_websocket(websocket)
@@ -970,7 +979,7 @@ async def websocket_endpoint(
 							print_exc()
 						continue
 
-					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong", "video_history_update"]:
+					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong", "video_history_update", "typing_start", "typing_stop"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					try:

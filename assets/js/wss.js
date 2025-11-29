@@ -188,6 +188,10 @@ let hasUnreadMessages = false
 let notificationSound = null
 let messageHandlers = new Map()
 
+// typing indicator
+let typingTimeout = null
+let isTyping = false
+let typingUsers = []
 
 const HEARTBEAT_CHECK_INTERVAL = 5000
 const HEARTBEAT_PING_THRESHOLD = 20000
@@ -208,6 +212,47 @@ function sendSafe(data) {
 	} catch (err) {
 		loggerWss.error('sendSafe: failed to send', err)
 		return false
+	}
+}
+
+function sendTypingStart() {
+	if (isTyping) return
+	isTyping = true
+	sendSafe({ type: "typing_start" })
+}
+
+function sendTypingStop() {
+	if (!isTyping) return
+	isTyping = false
+	sendSafe({ type: "typing_stop" })
+}
+
+function handleTypingInput() {
+	sendTypingStart()
+	if (typingTimeout) clearTimeout(typingTimeout)
+	typingTimeout = setTimeout(() => {
+		sendTypingStop()
+	}, 2000)
+}
+
+function updateTypingIndicator(users) {
+	typingUsers = users
+	const indicator = document.getElementById('typing-indicator')
+	const usernamesSpan = document.getElementById('typing-usernames')
+	if (!indicator || !usernamesSpan) return
+	if (users.length === 0) {
+		indicator.classList.add('hidden')
+		return
+	}
+	indicator.classList.remove('hidden')
+	if (users.length === 1) {
+		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span> is typing`
+	} else if (users.length === 2) {
+		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span> and <span class="italic">${users[1]}</span> are typing`
+	} else if (users.length === 3) {
+		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span>, <span class="italic">${users[1]}</span> and <span class="italic">${users[2]}</span> are typing`
+	} else {
+		usernamesSpan.innerHTML = `<span class="italic">${users.length} people</span> are typing`
 	}
 }
 
@@ -1202,6 +1247,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				} else {
 					loggerWss.warn("handleVideoHistoryUpdate not available")
 				}
+			} else if (data.type == "typing_status") {
+				updateTypingIndicator(data.users || [])
 			} else {
 				loggerWss.warn("couldnt match the type.", data.type)
 			}
@@ -1316,8 +1363,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 			if (hasUnreadMessages) {
 				clearNotificationGlow()
 			}
+			if (messageInput.value.trim() !== '') {
+				handleTypingInput()
+			}
 		})
 	}
+
+	updateTypingIndicator([])
 
 	function loadMoreMessages() {
 		if (!oldestMessageId || isLoadingMessages || !hasMoreMessages) {
@@ -1346,6 +1398,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 		}
 		const message = messageInput.value.trim()
 		if (message) {
+			if (typingTimeout) clearTimeout(typingTimeout)
+			sendTypingStop()
+			
 			const messageData = {
 				type: "send_message",
 				message: message,
