@@ -9,6 +9,7 @@ const { create: createYoutubeDl } = require('youtube-dl-exec')
 const WebSocket = require('ws')
 const UpdateManager = require('./updateManager.js')
 const os = require('os')
+const { VideoSyncManager } = require('./videoSyncManager.js')
 
 // const bcrypt = require('bcryptjs')
 // console.log(bcrypt.hashSync("123", 10))
@@ -32,6 +33,8 @@ const logger = {
 		console.log(`[${timestamp}] [DEBUG]`, ...args)
 	}
 }
+
+const videoSyncManager = new VideoSyncManager(logger)
 
 const isDev = !app.isPackaged
 
@@ -361,9 +364,6 @@ let inlineVideoInterval
 let isInlineWatching = false
 let modeTransitionLock = false
 
-let videoSyncWS = null
-let pendingWsRequests = new Map()
-let wsRequestId = 0
 let isClientUpToDate = false
 let lastConnectionAttempt = 0
 let reconnectCount = 0
@@ -501,23 +501,7 @@ const handleOfflineEvent = () => {
 	}
 	reconnectCount = 0
 	
-	for (const [id, { reject }] of pendingWsRequests.entries()) {
-		try { reject(new Error('Network offline')) } catch {}
-	}
-	pendingWsRequests.clear()
-	
-	if (videoSyncWS) {
-		try {
-			if (videoSyncWS.terminate) {
-				videoSyncWS.terminate()
-			} else {
-				videoSyncWS.close()
-			}
-		} catch(e) {
-			logger.debug('Error force closing video sync:', e)
-		}
-		videoSyncWS = null
-	}
+	videoSyncManager.disconnect()
 	
 	if (mainWindow && mainWindow.webContents) {
 		mainWindow.webContents.send('video-sync-status', { connected: false })
@@ -553,93 +537,66 @@ const startNetworkMonitoring = () => {
 }
 
 const connectVideoSyncWS = async () => {
-	if (videoSyncWS && videoSyncWS.readyState === WebSocket.OPEN) {
+	if (videoSyncManager.isConnected()) {
 		return true
 	}
+	videoSyncManager.setConfig(SERVER_ENDPOINT, USERID, secureStorage)
+	videoSyncManager.setRoomId(ROOMID)
+	videoSyncManager.setMainWindow(mainWindow)
 	
-	const now = Date.now()
-	if (now - lastConnectionAttempt < 5000) {
-		return false
+	videoSyncManager.onUrlChange = async (url) => {
+		currentVLCStatus.url = url
+		if (isInlineWatching) {
+			const processedUrl = await checkVideoUrl(url)
+			const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+			mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+		} else if (isVLCwatching) {
+			await setVideoVLC(url)
+		}
 	}
 	
-	lastConnectionAttempt = now
-	
-	if (videoSyncWS) {
-		videoSyncWS.close()
-		videoSyncWS = null
+	videoSyncManager.onTimeChange = async (time, passive) => {
+		if (isInlineWatching) {
+			if (!passive) {
+				mainWindow.webContents.send('inline-video-sync-time', { time })
+			}
+		} else if (isVLCwatching) {
+			try {
+				const info = await getInfo()
+				const currentTime = Math.floor(parseFloat(info.data.length) * parseFloat(info.data.position))
+				const diff = Math.abs(currentTime - time)
+				if (passive) {
+					if (diff > TIME_SYNC_TOLERANCE + 8) {
+						await setTimeVLC(time)
+					}
+				} else {
+					if (diff > TIME_SYNC_TOLERANCE) {
+						await setTimeVLC(time)
+					}
+				}
+			} catch (error) {
+				logger.debug('VLC not ready for time sync')
+			}
+		}
 	}
 	
-	if (!USERID || !ROOMID) {
-		logger.warn("Cannot connect to video sync: missing user or room")
-		return false
+	videoSyncManager.onPlayingChange = async (isPlaying, time) => {
+		if (isInlineWatching) {
+			mainWindow.webContents.send('inline-video-sync-playing', { isPlaying })
+		} else if (isVLCwatching) {
+			try {
+				const info = await getInfo()
+				const currentlyPlaying = info.data.state !== "paused"
+				if (currentlyPlaying !== isPlaying) {
+					await setPlayingVLC(isPlaying)
+				}
+			} catch (error) {
+				logger.debug('VLC not ready for playing state sync')
+			}
+		}
 	}
 	
-	try {
-		const userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
-		const roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
-		
-		const wsUrl = `wss://${SERVER_ENDPOINT}/videosync/?user=${encodeURIComponent(USERID)}&psw=${encodeURIComponent(userpsw)}&roomid=${encodeURIComponent(ROOMID)}&roompsw=${encodeURIComponent(roompsw)}`
-		
-		videoSyncWS = new WebSocket(wsUrl)
-		
-		return new Promise((resolve) => {
-			logger.info("trying to connect to websocket..")
-			videoSyncWS.on('open', () => {
-				logger.info("Video sync WebSocket connected")
-				isClientUpToDate = false
-				reconnectCount = 0
-				if (mainWindow && mainWindow.webContents) {
-					mainWindow.webContents.send('video-sync-status', { connected: true })
-				}
-				resolve(true)
-			})
-			
-			videoSyncWS.on('message', async (data) => {
-				try {
-					const message = JSON.parse(data.toString())
-					await handleVideoSyncMessage(message)
-				} catch (e) {
-					logger.error("Failed to parse WebSocket message:", e.message)
-				}
-			})
-			
-			videoSyncWS.on('close', async () => {
-				logger.warn("Video sync WebSocket disconnected")
-				for (const [id, { reject }] of pendingWsRequests.entries()) {
-					try { reject(new Error('WebSocket closed')) } catch {}
-				}
-				pendingWsRequests.clear()
-				videoSyncWS = null
-				isClientUpToDate = false
-				if (mainWindow && mainWindow.webContents) {
-					mainWindow.webContents.send('video-sync-status', { connected: false })
-				}
-				
-				if (reconnectTimeout) {
-					clearTimeout(reconnectTimeout)
-					reconnectTimeout = null
-				}
-				
-				reconnectCount = 0
-			})
-			
-			videoSyncWS.on('error', (error) => {
-				logger.error("Video sync WebSocket error:", error.message)
-				for (const [id, { reject }] of pendingWsRequests.entries()) {
-					try { reject(new Error('WebSocket error: ' + error.message)) } catch {}
-				}
-				pendingWsRequests.clear()
-				if (mainWindow && mainWindow.webContents) {
-					mainWindow.webContents.send('video-sync-status', { connected: false })
-				}
-				resolve(false)
-			})
-		})
-		
-	} catch (error) {
-		logger.error("Failed to connect video sync WebSocket:", error.message)
-		return false
-	}
+	return await videoSyncManager.connect()
 }
 
 const disconnectVideoSyncWS = () => {
@@ -647,208 +604,9 @@ const disconnectVideoSyncWS = () => {
 		status: 'stopped',
 		isPlaying: false
 	})
-	if (videoSyncWS) {
-		videoSyncWS.close()
-		videoSyncWS = null
-	}
+	videoSyncManager.disconnect()
+	videoSyncManager.setWatchingState(false, false)
 	logger.info("disconnectVideoSyncWS: successful.")
-}
-
-const sendVideoSyncMessage = async (message) => {
-	if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
-		logger.warn("Video sync WebSocket not connected")
-		return null
-	}
-	if (!isVLCwatching && !isInlineWatching) { 
-		logger.debug(`sendVideoSyncMessage: aborted. is_watching'${isVLCwatching}' isInlineWatching'${isInlineWatching}'`)
-		return true
-	}	const requestId = ++wsRequestId
-	message.requestId = requestId
-	
-	return new Promise((resolve, reject) => {
-		pendingWsRequests.set(requestId, { resolve, reject })
-		
-		setTimeout(() => {
-			if (pendingWsRequests.has(requestId)) {
-				pendingWsRequests.delete(requestId)
-				reject(new Error("WebSocket request timeout"))
-			}
-		}, 3000)
-		
-		try {
-			if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
-				throw new Error('WebSocket not open')
-			}
-			videoSyncWS.send(JSON.stringify(message))
-		} catch (err) {
-			pendingWsRequests.delete(requestId)
-			reject(err)
-		}
-	})
-}
-
-const handleVideoSyncMessage = async (message) => {
-	if (!isVLCwatching && !isInlineWatching){
-		logger.warn(`isVLCwatching'${isVLCwatching}' isInlineWatching'${isInlineWatching}'`)
-		return
-	}
-	const { type, requestId } = message
-	
-	if (requestId && pendingWsRequests.has(requestId)) {
-		const { resolve } = pendingWsRequests.get(requestId)
-		pendingWsRequests.delete(requestId)
-		
-		if (type === 'update_response') {
-			resolve({ status: message.success, error: message.error, history_entry: message.history_entry })
-		} else if (type === 'playerstatus_response') {
-			resolve({ status: true, data: message.data })
-		} else {
-			resolve(message)
-		}
-		return
-	}
-	
-	if (type === 'initial_state') {
-		logger.info("Received initial state from server")
-		isClientUpToDate = false
-		
-		if (mainWindow && mainWindow.webContents) {
-			mainWindow.webContents.send('subtitle-status', { 
-				subtitle_exist: message.subtitle_exist || false 
-			})
-			
-			if (!message.subtitle_exist) {
-				subtitleCache.clear()
-				logger.info("Cleared subtitle cache - no subtitles exist")
-			}
-		}
-	}
-	else if (type === 'connected') {
-		logger.info("Connected to video sync server")
-	}
-	else if (type === 'url_updated') {
-		logger.info("Server video URL updated:", message.url)
-		currentVLCStatus.url = message.url
-		if (message.user !== USERID) {
-			isClientUpToDate = false
-			
-			subtitleCache.clear()
-			logger.info("Cleared subtitle cache - video URL changed")
-			
-			if (mainWindow && mainWindow.webContents) {
-				mainWindow.webContents.send('subtitle-status', { 
-					subtitle_exist: message.subtitle_exist || false 
-				})
-			}
-
-			if (isInlineWatching) {
-				const processedUrl = await checkVideoUrl(message.url)
-				const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
-				mainWindow.webContents.send('inline-video-set', { url: finalUrl })
-			} else if (isVLCwatching) {
-				try {
-					const currentUrl = await getVideoUrl_VLC()
-					let shouldUpdateVideo = false
-					
-					if (isYouTubeUrl(message.url)) {
-						const cachedUrls = youtubeUrlCache.get(message.url)
-						if (cachedUrls && cachedUrls.urls) {
-							shouldUpdateVideo = !cachedUrls.urls.includes(currentUrl)
-						} else {
-							shouldUpdateVideo = currentUrl !== message.url
-						}
-					} else {
-						shouldUpdateVideo = currentUrl !== message.url
-					}
-					
-					if (shouldUpdateVideo) {
-						await setVideoVLC(message.url)
-					}
-				} catch (error) {
-					await setVideoVLC(message.url)
-				}
-			}
-		}
-	}
-	else if (type === 'time_updated') {
-		logger.info("Server time updated:", message.time)
-		if (message.user !== USERID) {
-			isClientUpToDate = false
-
-			if (isInlineWatching) {
-				mainWindow.webContents.send('inline-video-sync-time', { time: message.time })
-			} else if (isVLCwatching) {
-				try {
-					const info = await getInfo()
-					const currentTime = Math.floor(parseFloat(info.data.length) * parseFloat(info.data.position))
-					
-					if (Math.abs(currentTime - message.time) > TIME_SYNC_TOLERANCE) {
-						await setTimeVLC(message.time)
-					}
-				} catch (error) {
-					logger.debug(`VLC not ready for time sync, will sync later: ${error}`)
-				}
-			}
-		}
-	}
-	else if (type === 'playing_updated') {
-		logger.info("Server playing state updated:", message.is_playing)
-		if (message.user !== USERID) {
-			isClientUpToDate = false
-
-			if (isInlineWatching) {
-				mainWindow.webContents.send('inline-video-sync-playing', { isPlaying: message.is_playing })
-			} else if (isVLCwatching) {
-				try {
-					const info = await getInfo()
-					const currentlyPlaying = info.data.state !== "paused"
-					
-					if (currentlyPlaying !== message.is_playing) {
-						await setPlayingVLC(message.is_playing)
-					}
-				} catch (error) {
-					logger.debug(`VLC not ready for playing state sync, will sync later: ${error}`)
-				}
-			}
-		}
-	}
-	else if (type === 'subtitle_updated') {
-		logger.info("Server subtitle updated:", message.filename)
-		
-		try {
-			const subtitleBuffer = Buffer.from(message.subtitle_data, 'base64')
-			
-			subtitleCache.set(message.filename, subtitleBuffer)
-			
-			if (isVLCwatching) {
-				const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${message.filename}`)
-				fs.writeFileSync(tempPath, subtitleBuffer)
-
-				if (!await addSubtitleToVLC(tempPath)) {
-					logger.warn("Failed to add subtitle to VLC after retries")
-				}
-				
-				setTimeout(() => {
-					try { fs.unlinkSync(tempPath) } catch {}
-				}, 1000)
-			}
-			
-			if (mainWindow && mainWindow.webContents) {
-				mainWindow.webContents.send('subtitle-received', { 
-					filename: message.filename 
-				})
-				mainWindow.webContents.send('subtitle-status', { 
-					subtitle_exist: true 
-				})
-			}
-		} catch (error) {
-			logger.error("Failed to save/add subtitle:", error.message)
-		}
-		
-		if (message.user !== USERID) {
-			isClientUpToDate = false
-		}
-	}
 }
 
 ipcMain.on('goto-room_join', () => {
@@ -887,53 +645,95 @@ const makeRequest_server = async (url, json) => {
 }
 
 const makeRequest_videoSync = async (type, data = {}) => {
+	if (!videoSyncManager.isConnected()) {
+		logger.warn(`VideoSync request failed: not connected (${type})`)
+		return { status: false, error: "Not connected" }
+	}
+	if (!isVLCwatching && !isInlineWatching) {
+		logger.debug(`makeRequest_videoSync: aborted. is_watching'${isVLCwatching}' isInlineWatching'${isInlineWatching}'`)
+		return { status: true }
+	}
+	
 	try {
-		if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
-			logger.warn(`VideoSync request failed: WebSocket not connected (${type})`)
-			return { status: false, error: "WebSocket not connected" }
-		}
-		if (!isVLCwatching && !isInlineWatching) { 
-			logger.debug(`makeRequest_videoSync: aborted. is_watching'${isVLCwatching}' isInlineWatching'${isInlineWatching}'`)
-			return true
+		let result
+		switch (type) {
+			case 'update_time':
+				result = await videoSyncManager.updateTime(data.new_time, data.timeout_pass || false)
+				break
+			case 'update_isplaying':
+				result = await videoSyncManager.updateState(data.is_playing, data.new_time || 0)
+				break
+			case 'update_url':
+				result = await videoSyncManager.updateUrl(data.new_url)
+				break
+			case 'get_playerstatus':
+				result = await videoSyncManager.requestSync()
+				if (result && result.type === 'init') {
+					return { status: true, data: {
+						url: { value: result.url, user: '' },
+						time: { value: result.time, user: '' },
+						is_playing: { value: result.isPlaying, user: '' },
+						subtitle_exist: { value: result.subtitleExist, user: '' }
+					}}
+				}
+				break
+			case 'imuptodate':
+				result = await videoSyncManager.markUpToDate()
+				isClientUpToDate = true
+				break
+			case 'update_subtitle':
+				result = await videoSyncManager.uploadSubtitle(data.subtitle_data, data.filename)
+				return result
+			case 'request_subtitle':
+				result = await videoSyncManager.downloadSubtitle()
+				if (result.status && result.subtitle_data) {
+					handleSubtitleReceived(result.subtitle_data, result.filename)
+				}
+				return result
+			default:
+				logger.warn(`Unknown sync type: ${type}`)
+				return { status: false, error: 'Unknown type' }
 		}
 		
-		const message = { type, ...data }
-		const response = await sendVideoSyncMessage(message)
-		
-		if (type.startsWith('update_') && response.success === false && 
-			response.error && response.error.includes("not authorized")) {
-			logger.debug("Update rejected, user not up to date. Attempting sync...")
-			
-			try {
-				const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
-				// if (statusResult.data) {
-				// 	await sendVideoSyncMessage({ type: "imuptodate" })
-				// 	logger.debug("Marked as up to date after sync check")
-				// }
-			} catch (syncError) {
-				logger.warn("Failed to sync:", syncError.message)
+		if (result && result.type === 'ack') {
+			if (!result.success && result.error && result.error.includes('not authorized')) {
+				logger.debug('Update rejected, requesting sync...')
+				await videoSyncManager.requestSync()
+				return { status: false, error: 'User not up to date' }
 			}
-			
-			return { status: false, error: "User not up to date, sync attempted" }
+			return { status: result.success, data: { status: result.success } }
 		}
-		
-		return { status: response.success !== false, data: response.data || response }
+		return { status: result && result.success !== false, data: result }
 	} catch (error) {
-		logger.error(`VideoSync request error: ${type}`, error.message)
-		if (error.message.includes("timeout") && videoSyncWS) {
-			logger.warn("WebSocket timeout detected, force terminating connection")
-			try {
-				videoSyncWS.terminate()
-			} catch {
-				videoSyncWS.close()
-			}
-			videoSyncWS = null
-			for (const [id, { reject }] of pendingWsRequests.entries()) {
-				try { reject(new Error('Connection terminated')) } catch {}
-			}
-			pendingWsRequests.clear()
-		}
+		logger.error(`VideoSync error: ${type}`, error.message)
 		return { status: false, error: error.message }
+	}
+}
+
+const handleSubtitleReceived = async (base64Data, filename) => {
+	try {
+		const subtitleBuffer = Buffer.from(base64Data, 'base64')
+		subtitleCache.set(filename, subtitleBuffer)
+		
+		if (isVLCwatching) {
+			const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${filename}`)
+			fs.writeFileSync(tempPath, subtitleBuffer)
+			
+			if (!await addSubtitleToVLC(tempPath)) {
+				logger.warn("Failed to add subtitle to VLC after retries")
+			}
+			
+			setTimeout(() => {
+				try { fs.unlinkSync(tempPath) } catch {}
+			}, 1000)
+		}
+		
+		if (mainWindow && mainWindow.webContents) {
+			mainWindow.webContents.send('subtitle-received', { filename })
+			mainWindow.webContents.send('subtitle-status', { subtitle_exist: true })
+		}
+	} catch (error) {
+		logger.error("Failed to process received subtitle:", error.message)
 	}
 }
 
@@ -987,6 +787,7 @@ const abortVLC = async (is_videochange=false) => {
 	}
 	
 	isVLCwatching = false
+	videoSyncManager.setWatchingState(false, isInlineWatching)
 	if (vlcInterval){
 		clearInterval(vlcInterval)
 		vlcInterval = null
@@ -1158,7 +959,7 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		subtitleCache.clear()
 		
 		let result = { status: false }
-		if (videoSyncWS && videoSyncWS.readyState === WebSocket.OPEN) {
+		if (videoSyncManager.isConnected()) {
 			result = await makeRequest_videoSync("update_url", {"new_url": url})
 		} else {
 			result = await axios.post(
@@ -1359,6 +1160,7 @@ const startVideoInline = async () => {
 	}
 	
 	isInlineWatching = true
+	videoSyncManager.setWatchingState(false, true)
 	
 	let connectionAttempts = 0
 	while (connectionAttempts < 3) {
@@ -1427,6 +1229,7 @@ const setVideoInline = async (url) => {
 
 const abortInline = async () => {
 	isInlineWatching = false
+	videoSyncManager.setWatchingState(isVLCwatching, false)
 	
 	if (inlineVideoInterval) {
 		clearInterval(inlineVideoInterval)
@@ -1461,7 +1264,7 @@ const startInlineMonitoring = () => {
 		
 		if (!isClientUpToDate) {
 			try {
-				const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
+				const statusResult = await makeRequest_videoSync("get_playerstatus")
 				if (statusResult && statusResult.data) {
 					const serverStatus = statusResult.data
 					
@@ -1479,7 +1282,7 @@ const startInlineMonitoring = () => {
 						inlineIsPlaying = serverStatus.is_playing.value
 					}
 					
-					await sendVideoSyncMessage({ type: "imuptodate" })
+					await makeRequest_videoSync("imuptodate")
 					isClientUpToDate = true
 					logger.info("Inline video synced with server")
 				}
@@ -1588,6 +1391,7 @@ const openVLC = async () => {
 			}
 
 			isVLCwatching = true
+			videoSyncManager.setWatchingState(true, false)
 
 			let connectionAttempts = 0
 			while (connectionAttempts < 3) {
@@ -1735,7 +1539,7 @@ const startVLCMonitoring = async () => {
 
 	let initialIsPlaying = true
 	try {
-		const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
+		const statusResult = await makeRequest_videoSync("get_playerstatus")
 		if (statusResult && statusResult.data && statusResult.data.is_playing) {
 			initialIsPlaying = statusResult.data.is_playing.value
 		}
@@ -1764,7 +1568,7 @@ const startVLCMonitoring = async () => {
 
 		if (!isClientUpToDate) {
 			try {
-				const statusResult = await sendVideoSyncMessage({ type: "get_playerstatus" })
+				const statusResult = await makeRequest_videoSync("get_playerstatus")
 				if (statusResult && statusResult.data) {
 					const serverStatus = statusResult.data
 					
@@ -1814,7 +1618,7 @@ const startVLCMonitoring = async () => {
 						logger.debug("VLC not ready, trying again.")
 						return
 					}
-					await sendVideoSyncMessage({ type: "imuptodate" })
+					await makeRequest_videoSync("imuptodate")
 					isClientUpToDate = true
 					logger.info("sent imuptodate and marked isclientuptodate true.")
 					
@@ -1906,7 +1710,7 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentState !== stateVLC) {
-				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+				if (!videoSyncManager.isConnected()) {
 					return
 				}
 				logger.debug("VLC state change detected")
@@ -1921,7 +1725,7 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (currentTime !== 0 && Math.abs(currentTime - timeVLC) > 1.5) {
-				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+				if (!videoSyncManager.isConnected()) {
 					return
 				}
 				logger.debug(`VLC seek detected currentTime${currentTime} timeVLC${timeVLC}`)
@@ -1938,7 +1742,7 @@ const startVLCMonitoring = async () => {
 			}
 			
 			if (timeVLC !== 0 && Math.abs(lastSentTime - timeVLC) > 5) {
-				if (!videoSyncWS || videoSyncWS.readyState !== WebSocket.OPEN) {
+				if (!videoSyncManager.isConnected()) {
 					return
 				}
 				logger.debug(`sending regular update, lastSentTime'${lastSentTime}' timeVLC'${timeVLC}'`)
