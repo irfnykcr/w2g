@@ -167,14 +167,23 @@ if (!fs.existsSync(appConfigPath)) {
 	process.exit()
 }
 
-const configData = fs.readFileSync(appConfigPath, 'utf-8')
-appConfig = JSON.parse(configData)
+try {
+	const configData = fs.readFileSync(appConfigPath, 'utf-8')
+	appConfig = JSON.parse(configData)
+} catch (e) {
+	logger.error("Failed to parse config:", e.message)
+	process.exit()
+}
 logger.info('Loaded app config:', appConfig)
 
 let movieApiConfig = {}
 if (fs.existsSync(movieApiConfigPath)) {
-	movieApiConfig = JSON.parse(fs.readFileSync(movieApiConfigPath, 'utf-8'))
-	logger.info('Loaded movieApi config:', movieApiConfig)
+	try {
+		movieApiConfig = JSON.parse(fs.readFileSync(movieApiConfigPath, 'utf-8'))
+		logger.info('Loaded movieApi config:', movieApiConfig)
+	} catch (e) {
+		logger.warn("Failed to parse movieApi config:", e.message)
+	}
 }
 
 let SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
@@ -251,6 +260,21 @@ const isYouTubeUrl = (url) => {
 		}
 	}
 	return false
+}
+
+const isValidVideoUrl = (url) => {
+	if (!url || typeof url !== 'string') return false
+	const trimmed = url.trim()
+	if (trimmed.length === 0 || trimmed.length > 2048) return false
+	if (trimmed.startsWith('-')) return false
+	if (trimmed.includes('\0')) return false
+	try {
+		const parsed = new URL(trimmed)
+		if (!['http:', 'https:'].includes(parsed.protocol)) return false
+		return true
+	} catch {
+		return false
+	}
 }
 
 let ROOMID
@@ -603,6 +627,11 @@ const connectVideoSyncWS = async () => {
 		}
 	}
 	
+	videoSyncManager.onSubtitleAvailable = async () => {
+		logger.info('Subtitle available, auto-downloading...')
+		await requestSubtitle()
+	}
+	
 	return await videoSyncManager.connect()
 }
 
@@ -632,7 +661,7 @@ ipcMain.on('goto-update', () => {
 const makeRequest_server = async (url, json) => {
 	if (!json) json = {}
 	if (!USERID || !ROOMID) {
-		return {status: false, message:`useridid, roomid, ${USERID}, ${ROOMID}`}
+		return {status: false, message: "Not authenticated"}
 	}
 	json.userid = USERID
 	json.userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
@@ -720,10 +749,11 @@ const makeRequest_videoSync = async (type, data = {}) => {
 const handleSubtitleReceived = async (base64Data, filename) => {
 	try {
 		const subtitleBuffer = Buffer.from(base64Data, 'base64')
-		subtitleCache.set(filename, subtitleBuffer)
+		const safeId = `${Date.now()}${Math.floor(Math.random() * 1000)}`
+		subtitleCache.set(safeId, subtitleBuffer)
 		
 		if (isVLCwatching) {
-			const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${filename}`)
+			const tempPath = path.join(os.tmpdir(), `vlc_sub_${safeId}.srt`)
 			fs.writeFileSync(tempPath, subtitleBuffer)
 			
 			if (!await addSubtitleToVLC(tempPath)) {
@@ -940,6 +970,11 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 			throw new Error('Invalid URL provided')
 		}
 		url = url.trim()
+		
+		if (!isValidVideoUrl(url)) {
+			logger.warn("Invalid video URL rejected:", url.substring(0, 100))
+			return false
+		}
 		
 		if (currentVLCStatus.url === url) {
 			logger.info("Same video URL (cached), skipping update")
@@ -1444,6 +1479,12 @@ const openVLC = async () => {
 			const SERVER_TIME = r.data.time.value
 			lastSetVideoUrl = CURRENT_VIDEO_SERVER
 			
+			if (!CURRENT_VIDEO_SERVER || !isValidVideoUrl(CURRENT_VIDEO_SERVER)) {
+				logger.warn("No valid video URL from server")
+				await abortVLC()
+				return resolve(false)
+			}
+			
 			let VLC_ARGS = [
 				`--intf`, `qt`,
 				`--extraintf`, `http`,
@@ -1469,12 +1510,19 @@ const openVLC = async () => {
 				const processedUrl = await checkVideoUrl(CURRENT_VIDEO_SERVER)
 				if (Array.isArray(processedUrl) && processedUrl.length === 2) {
 					logger.info("ytvideo with 2 urls")
-					VLC_ARGS.push('--no-video-title-show', processedUrl[0], `--input-slave=${processedUrl[1]}`)
+					const url1 = processedUrl[0]
+					const url2 = processedUrl[1]
+					if (isValidVideoUrl(url1) && isValidVideoUrl(url2)) {
+						VLC_ARGS.push('--no-video-title-show', url1, `--input-slave=${url2}`)
+					} else if (isValidVideoUrl(url1)) {
+						VLC_ARGS.push('--no-video-title-show', url1)
+					}
 				} else {
 					logger.info("ytvideo with 1 url")
-					VLC_ARGS.push('--no-video-title-show', Array.isArray(processedUrl) ? processedUrl[0] : processedUrl)
+					const url1 = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+					if (isValidVideoUrl(url1)) VLC_ARGS.push('--no-video-title-show', url1)
 				}
-			} else {
+			} else if (CURRENT_VIDEO_SERVER && isValidVideoUrl(CURRENT_VIDEO_SERVER)) {
 				logger.info("not a ytvideo")
 				VLC_ARGS.push(CURRENT_VIDEO_SERVER)
 			}
@@ -1825,6 +1873,7 @@ ipcMain.handle('stop-vlc', async (event) => {
 })
 
 ipcMain.handle('set-subtitle', async (event, fileData, fileName) => {
+	const MAX_SUBTITLE_SIZE = 10 * 1024 * 1024
 	try {
 		let buffer
 		if (Array.isArray(fileData)) {
@@ -1838,6 +1887,10 @@ ipcMain.handle('set-subtitle', async (event, fileData, fileName) => {
 		}
 		if (!buffer) {
 			logger.error('set-subtitle: invalid fileData')
+			return false
+		}
+		if (buffer.length > MAX_SUBTITLE_SIZE) {
+			logger.error('set-subtitle: file too large')
 			return false
 		}
 		const base64Data = buffer.toString('base64')
@@ -1863,13 +1916,19 @@ ipcMain.handle('add-subtitle-vlc', async (event, filePath) => {
 })
 
 ipcMain.handle('upload-subtitle', async (event, arrayBuffer, filename) => {
+	const MAX_SUBTITLE_SIZE = 10 * 1024 * 1024
 	try {
 		const subtitleBuffer = Buffer.from(arrayBuffer)
+		if (subtitleBuffer.length > MAX_SUBTITLE_SIZE) {
+			logger.error('upload-subtitle: file too large')
+			return { success: false, error: 'File too large' }
+		}
+		const safeId = `${Date.now()}${Math.floor(Math.random() * 1000)}`
 		
-		subtitleCache.set(filename, subtitleBuffer)
+		subtitleCache.set(safeId, subtitleBuffer)
 		
 		if (isVLCwatching) {
-			const tempPath = path.join(require('os').tmpdir(), `vlc_subtitle_${Date.now()}_${filename}`)
+			const tempPath = path.join(os.tmpdir(), `vlc_sub_${safeId}.srt`)
 			fs.writeFileSync(tempPath, subtitleBuffer)
 			
 			const success = await addSubtitleToVLC(tempPath)

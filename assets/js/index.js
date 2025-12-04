@@ -17,6 +17,16 @@ const loggerIndex = {
 	}
 }
 
+const escapeHtml = (str) => {
+	if (!str) return ''
+	return String(str)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#039;')
+}
+
 document.addEventListener("DOMContentLoaded", () => {
 	const videourl = document.querySelector("#urlof-thevideo")
 	const setthevideo = document.querySelector("#set-thevideo")
@@ -380,11 +390,15 @@ document.addEventListener("DOMContentLoaded", () => {
 				displayText = fileInfo.filename
 				urlTitle = item.url
 			}
+			const safeDisplayText = escapeHtml(displayText)
+			const safeUrlTitle = escapeHtml(urlTitle)
+			const safeDate = escapeHtml(item.date)
+			const safeUser = escapeHtml(item.user)
 			li.innerHTML = `
 				<div class="flex-1 min-w-0 select-text">
-					<p class="text-sm sm:text-base font-medium text-white truncate" title="${displayText}">${displayText}</p>
-					${urlTitle ? `<p class="text-xs text-gray-400 mt-1">${urlTitle}</p>` : ""}
-					<p class="text-xs text-gray-400 mt-1">${item.date} | by: ${item.user} <span class="${statusClass}">${statusIcon}</span></p>
+					<p class="text-sm sm:text-base font-medium text-white truncate" title="${safeDisplayText}">${safeDisplayText}</p>
+					${safeUrlTitle ? `<p class="text-xs text-gray-400 mt-1">${safeUrlTitle}</p>` : ""}
+					<p class="text-xs text-gray-400 mt-1">${safeDate} | by: ${safeUser} <span class="${statusClass}">${statusIcon}</span></p>
 				</div>
 				<button class="ml-4 bg-turkuazz text-dark-bg font-bold py-2 px-4 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base history-use-btn">
 					>

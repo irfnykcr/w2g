@@ -1,6 +1,21 @@
 const { VideoSyncClient } = require('./videoSyncProtocol')
 const axios = require('axios')
 
+const isValidVideoUrl = (url) => {
+    if (!url || typeof url !== 'string') return false
+    const trimmed = url.trim()
+    if (trimmed.length === 0 || trimmed.length > 2048) return false
+    if (trimmed.startsWith('-')) return false
+    if (trimmed.includes('\0')) return false
+    try {
+        const parsed = new URL(trimmed)
+        if (!['http:', 'https:'].includes(parsed.protocol)) return false
+        return true
+    } catch {
+        return false
+    }
+}
+
 class VideoSyncManager {
     constructor(logger) {
         this.logger = logger
@@ -57,13 +72,16 @@ class VideoSyncManager {
             }
         }
 
-        this.client.onSubtitleFlag = (exists) => {
+        this.client.onSubtitleFlag = async (exists) => {
             this.logger.info('Subtitle flag changed:', exists)
             try {
                 if (this.mainWindow && !this.mainWindow.isDestroyed() && this.mainWindow.webContents) {
                     this.mainWindow.webContents.send('subtitle-status', { subtitle_exist: exists })
                 }
             } catch {}
+            if (exists && this.onSubtitleAvailable) {
+                await this.onSubtitleAvailable()
+            }
             if (!exists) {
                 this.subtitleCache.clear()
             }
@@ -135,6 +153,10 @@ class VideoSyncManager {
 
     async updateUrl(url) {
         if (!this.isVLCwatching && !this.isInlineWatching) return { success: true }
+        if (!isValidVideoUrl(url)) {
+            this.logger.warn('Invalid URL rejected:', url ? url.substring(0, 100) : 'null')
+            return { success: false, error: 'Invalid URL' }
+        }
         this.subtitleCache.clear()
         return await this.client.updateUrl(url)
     }
