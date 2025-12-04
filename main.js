@@ -159,6 +159,7 @@ const addSubtitleToVLC = async (subtitlePath, maxRetries = 5) => {
 const __apppath = isDev ? __dirname : process.resourcesPath
 logger.info("----APPPATH:", __apppath)
 const appConfigPath = isDev ? path.join(__apppath, 'resources/config/config.json') : path.join(__apppath, 'config/config.json')
+const movieApiConfigPath = isDev ? path.join(__apppath, 'resources/config/movieApi.json') : path.join(__apppath, 'config/movieApi.json')
 
 let appConfig = {}
 if (!fs.existsSync(appConfigPath)) {
@@ -169,6 +170,12 @@ if (!fs.existsSync(appConfigPath)) {
 const configData = fs.readFileSync(appConfigPath, 'utf-8')
 appConfig = JSON.parse(configData)
 logger.info('Loaded app config:', appConfig)
+
+let movieApiConfig = {}
+if (fs.existsSync(movieApiConfigPath)) {
+	movieApiConfig = JSON.parse(fs.readFileSync(movieApiConfigPath, 'utf-8'))
+	logger.info('Loaded movieApi config:', movieApiConfig)
+}
 
 let SERVER_ENDPOINT = appConfig.SERVER_ENDPOINT
 ipcMain.handle('get-serverendpoint', (event) => {
@@ -434,7 +441,7 @@ const createWindow = async () => {
 	
 	startNetworkMonitoring()
 	
-	win.loadFile(path.join(__dirname, 'views/login.html'))
+	win.loadFile(path.join(__dirname, 'views/index.html'))
 	if (isDev){
 		win.webContents.openDevTools()
 	}
@@ -1010,6 +1017,22 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 
 ipcMain.handle('get-config', async () => {
 	return JSON.parse(JSON.stringify(appConfig))
+})
+
+ipcMain.handle('get-movieapi-config', async () => {
+	return JSON.parse(JSON.stringify(movieApiConfig))
+})
+
+ipcMain.handle('save-movieapi-config', async (event, config) => {
+	try {
+		movieApiConfig = config
+		fs.writeFileSync(movieApiConfigPath, JSON.stringify(movieApiConfig, null, 4), 'utf-8')
+		logger.info("MovieApi config saved:", movieApiConfig)
+		return true
+	} catch (error) {
+		logger.error("Failed to save movieApi config:", error.message)
+		return false
+	}
 })
 
 ipcMain.handle('save-config', async (event, vlcport, serverendpoint, vlcfinder, vlcpath, vlchttppass, timesynctolerance) => {
