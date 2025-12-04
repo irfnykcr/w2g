@@ -1,18 +1,16 @@
 from traceback import print_exc
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from bcrypt import checkpw
-from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv, path, remove
 from signal import signal, SIGTERM, SIGINT
 import sys
 import re
-from atexit import register
 from base64 import b64decode, b64encode
 import logging
 from datetime import datetime
 from videoSyncBinary import BinaryProtocol, RoomManager
+import async_db
 
 load_dotenv()
 
@@ -70,28 +68,10 @@ class RateLimiter:
 rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
 ws_rate_limiter = RateLimiter(max_requests=100, window_seconds=10)
 
-connection_pool = pooling.MySQLConnectionPool(
-	pool_name="mypool", 
-	pool_size=10,
-	pool_reset_session=True,
-	host=getenv("MYSQL_HOST"),
-	user=getenv("MYSQL_USER"),
-	password=getenv("MYSQL_PASSWORD"),
-	database=getenv("MYSQL_DATABASE")
-)
-
 HOME = getenv("DIR_SERVER")
 SUBTITLES_DIR = fr"{HOME}/subtitles"
 
 room_manager = RoomManager()
-
-def get_db_connection():
-	try:
-		return connection_pool.get_connection()
-	except:
-		print_exc()
-		logger.error("Error getting connection from pool")
-		return None
 
 def check_url(url: str) -> bool:
 	if not url:
@@ -114,77 +94,6 @@ def is_valid_roomid(roomid: str) -> bool:
 	if not roomid:
 		return False
 	return bool(ROOMID_PATTERN.match(roomid))
-
-def checkUser(user: str, psw: str) -> bool:
-	if not user or not psw:
-		return False
-	conn = get_db_connection()
-	if not conn:
-		return False
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute("SELECT password_hash FROM users WHERE user = %s", (user,))
-		result = cursor.fetchone()
-		if result and checkpw(psw.encode(), result[0].encode()):
-			return True
-		return False
-	except:
-		print_exc()
-		return False
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
-
-def checkRoom(roomid: str, roompsw: str) -> bool:
-	if not roomid or not roompsw:
-		return False
-	conn = get_db_connection()
-	if not conn:
-		return False
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute("SELECT password_hash FROM rooms WHERE roomid = %s", (roomid,))
-		result = cursor.fetchone()
-		if result and checkpw(roompsw.encode(), result[0].encode()):
-			return True
-		return False
-	except:
-		print_exc()
-		return False
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
-
-def add_to_history(roomid: str, user: str, url: str, success: bool):
-	conn = get_db_connection()
-	if not conn:
-		return None
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute(
-			"INSERT INTO room_history (roomid, user, link, success) VALUES (%s, %s, %s, %s)",
-			(roomid, user, url, 1 if success else 0)
-		)
-		conn.commit()
-		return {
-			"id": cursor.lastrowid,
-			"user": user,
-			"url": url,
-			"success": success,
-			"date": datetime.now().strftime("%Y-%m-%d %H:%M")
-		}
-	except:
-		print_exc()
-		return None
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
 
 def save_subtitle(roomid: str, subtitle_data: str, filename: str) -> bool:
 	if not is_valid_roomid(roomid):
@@ -238,42 +147,18 @@ def subtitle_exists(roomid: str) -> bool:
 		return False
 	return path.exists(path.join(SUBTITLES_DIR, f"{roomid}.vtt"))
 
-def save_rooms_to_db():
-	conn = get_db_connection()
-	if not conn:
-		logger.error("Failed to save room states to database")
-		return
-	cursor = None
+async def save_rooms_to_db():
 	try:
-		cursor = conn.cursor()
 		for roomid, room in room_manager.rooms.items():
-			cursor.execute("""
-				INSERT INTO plyr_status (roomid, url, time, is_playing, subtitle_exist)
-				VALUES (%s, %s, %s, %s, %s)
-				ON DUPLICATE KEY UPDATE url=%s, time=%s, is_playing=%s, subtitle_exist=%s
-			""", (
-				roomid, room.state.url, room.state.time, room.state.is_playing, room.state.subtitle_exist,
-				room.state.url, room.state.time, room.state.is_playing, room.state.subtitle_exist
-			))
-		conn.commit()
+			await async_db.save_room_state(roomid, room.state.url, room.state.time, room.state.is_playing, room.state.subtitle_exist)
 		logger.info(f"Saved {len(room_manager.rooms)} rooms to database")
 	except:
 		print_exc()
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
 
-def load_rooms_from_db():
-	conn = get_db_connection()
-	if not conn:
-		logger.info("Failed to load room states from database")
-		return
-	cursor = None
+async def load_rooms_from_db():
 	try:
-		cursor = conn.cursor()
-		cursor.execute("SELECT roomid, url, time, is_playing, subtitle_exist FROM plyr_status")
-		for roomid, url, time_val, is_playing, subtitle_exist in cursor.fetchall():
+		rows = await async_db.load_all_room_states()
+		for roomid, url, time_val, is_playing, subtitle_exist in rows:
 			if not is_valid_roomid(roomid):
 				continue
 			room = room_manager.get_or_create_room(roomid)
@@ -287,20 +172,9 @@ def load_rooms_from_db():
 		logger.info(f"Loaded {len(room_manager.rooms)} rooms from database")
 	except:
 		print_exc()
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
-
-def cleanup_and_save():
-	logger.info("Shutting down, saving room states...")
-	save_rooms_to_db()
-
-register(cleanup_and_save)
 
 def signal_handler(sig, frame):
 	logger.info(f"Received signal {sig}")
-	cleanup_and_save()
 	sys.exit(0)
 
 signal(SIGTERM, signal_handler)
@@ -308,13 +182,15 @@ signal(SIGINT, signal_handler)
 
 @app.on_event("startup")
 async def startup_event():
+	await async_db.init_pool()
 	logger.info("Starting up, loading room states...")
-	load_rooms_from_db()
+	await load_rooms_from_db()
 
 @app.on_event("shutdown")
 async def shutdown_event():
 	logger.info("Shutting down, saving room states...")
-	save_rooms_to_db()
+	await save_rooms_to_db()
+	await async_db.close_pool()
 
 
 class VideoSyncHandler:
@@ -428,7 +304,7 @@ class VideoSyncHandler:
 		elif msg_type == 'url':
 			new_url = msg['url']
 			url_valid = check_url(new_url)
-			add_to_history(roomid, user, new_url, url_valid)
+			await async_db.add_to_history(roomid, user, new_url, url_valid)
 			
 			if not url_valid:
 				ack = BinaryProtocol.encode_ack(False, request_id, "invalid url")
@@ -489,7 +365,7 @@ async def websocket_endpoint(websocket: WebSocket):
 		await websocket.close(code=1008, reason="Missing parameters")
 		return
 
-	if not checkUser(user, psw):
+	if not await async_db.check_user(user, psw):
 		logger.error("Invalid user credentials")
 		ack = BinaryProtocol.encode_ack(False, 0, "invalid user")
 		await websocket.send_bytes(ack)
@@ -503,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
 		await websocket.close(code=1008, reason="Invalid room format")
 		return
 
-	if not checkRoom(roomid, roompsw):
+	if not await async_db.check_room(roomid, roompsw):
 		logger.error("Invalid room credentials")
 		ack = BinaryProtocol.encode_ack(False, 0, "invalid room")
 		await websocket.send_bytes(ack)
@@ -551,7 +427,7 @@ async def login_user(request: Request):
 	user = str(data.get("user", ""))
 	psw = str(data.get("psw", ""))
 	logger.info(f"login_user: {user}")
-	return {"status": checkUser(user, psw)}
+	return {"status": await async_db.check_user(user, psw)}
 
 @app.post('/login_room')
 async def login_room(request: Request):
@@ -562,7 +438,7 @@ async def login_room(request: Request):
 	room = str(data.get("room", ""))
 	psw = str(data.get("psw", ""))
 	logger.info(f"login_room: {room}")
-	return {"status": checkRoom(room, psw)}
+	return {"status": await async_db.check_room(room, psw)}
 
 @app.post('/get_current_url')
 async def get_current_url(request: Request):
@@ -571,7 +447,7 @@ async def get_current_url(request: Request):
 	roompsw = str(data.get("roompsw", "") or "")
 	if not (room and roompsw):
 		return {"status": False, "error": "Missing parameters"}
-	if not checkRoom(room, roompsw):
+	if not await async_db.check_room(room, roompsw):
 		return {"status": False, "error": "Invalid room"}
 	r = room_manager.get_room(room)
 	url = r.state.url if r else ""
@@ -590,13 +466,13 @@ async def setvideourl_offline(request: Request):
 	
 	if not (user and userpsw and roomid and roompsw and new_url):
 		return {"status": False, "error": "Missing required parameters"}
-	if not checkUser(user, userpsw):
+	if not await async_db.check_user(user, userpsw):
 		return {"status": False, "error": "Invalid user credentials"}
-	if not checkRoom(roomid, roompsw):
+	if not await async_db.check_room(roomid, roompsw):
 		return {"status": False, "error": "Invalid room credentials"}
 	
 	url_valid = check_url(new_url)
-	history_entry = add_to_history(roomid, user, new_url, url_valid)
+	history_entry = await async_db.add_to_history(roomid, user, new_url, url_valid)
 	
 	if not url_valid:
 		return {"status": False, "error": "Invalid URL", "history_entry": history_entry}
@@ -627,9 +503,9 @@ async def upload_subtitle(request: Request):
 
 	if not (user and userpsw and roomid and roompsw and subtitle_data):
 		return {"status": False, "error": "Missing parameters"}
-	if not checkUser(user, userpsw):
+	if not await async_db.check_user(user, userpsw):
 		return {"status": False, "error": "Invalid user"}
-	if not checkRoom(roomid, roompsw):
+	if not await async_db.check_room(roomid, roompsw):
 		return {"status": False, "error": "Invalid room"}
 
 	if save_subtitle(roomid, subtitle_data, filename):
@@ -649,7 +525,7 @@ async def download_subtitle(request: Request):
 
 	if not (roomid and roompsw):
 		return {"status": False, "error": "Missing parameters"}
-	if not checkRoom(roomid, roompsw):
+	if not await async_db.check_room(roomid, roompsw):
 		return {"status": False, "error": "Invalid room"}
 
 	subtitle_data = load_subtitle(roomid)

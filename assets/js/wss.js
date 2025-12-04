@@ -203,9 +203,9 @@ let typingTimeout = null
 let isTyping = false
 let typingUsers = []
 
-const HEARTBEAT_CHECK_INTERVAL = 5000
-const HEARTBEAT_PING_THRESHOLD = 20000
-const HEARTBEAT_TIMEOUT = 60000
+const HEARTBEAT_CHECK_INTERVAL = 10000
+const HEARTBEAT_PING_THRESHOLD = 25000
+const HEARTBEAT_TIMEOUT = 45000
 
 // heartbeat
 let heartbeatInterval = null
@@ -1122,13 +1122,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 				}
 
 				if (data && data.type === 'server_ping') {
-					// loggerWss.debug(`server_ping received (ts ${data.ts || 'n/a'})`)
+					lastPong = Date.now()
 					sendSafe({ type: 'server_pong', ts: Date.now() })
-					// loggerWss.debug('server_pong sent')
 					return
 				}
 				if (data && data.type === 'pong') {
-					// loggerWss.debug('pong received from server')
 				lastPong = Date.now()
 				return
 			}
@@ -1279,27 +1277,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 				connectionTimeout = null
 			}
 			
-			if (wss){
-				if (wss === socket) {
-					if (wss.close){
-						wss.close()
-					}
-					wss = null
-				}
-			}
-			if (socket){
-				if (socket.close){
-					socket.close()
-				}
-				socket = null
+			const wasCurrentSocket = wss === socket
+			if (wasCurrentSocket) {
+				wss = null
 			}
 			
 			isConnecting = false
 			
-				if (ev.code !== 1000) {
-					const delay = navigator.onLine ? 2000 : 5000
-					loggerWss.debug(`Scheduling reconnect in ${delay}ms due to close code ${ev.code}`)
-					reconnectTimeout = setTimeout(() => connectWebSocket(1000), delay)
+			const shouldReconnect = ev.code !== 1000 && 
+				ev.reason !== "New connection established" &&
+				wasCurrentSocket
+			
+			if (shouldReconnect) {
+				const delay = navigator.onLine ? 2000 : 5000
+				loggerWss.debug(`Scheduling reconnect in ${delay}ms due to close code ${ev.code}`)
+				reconnectTimeout = setTimeout(() => connectWebSocket(1000), delay)
+			} else {
+				loggerWss.debug(`Not reconnecting: code=${ev.code} reason=${ev.reason} wasCurrentSocket=${wasCurrentSocket}`)
 			}
 		}
 

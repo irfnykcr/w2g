@@ -7,10 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from json import loads, dumps
 from json import JSONDecodeError
 from time import time
-from bcrypt import checkpw
-from mysql.connector import pooling
 from dotenv import load_dotenv
 from os import getenv
+import async_db
 load_dotenv()
 
 logging.basicConfig(
@@ -22,6 +21,14 @@ logger = logging.getLogger("wssChat")
 
 app = FastAPI()
 
+@app.on_event("startup")
+async def startup():
+	await async_db.init_pool()
+
+@app.on_event("shutdown")
+async def shutdown():
+	await async_db.close_pool()
+
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -29,96 +36,6 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
-
-connection_pool = pooling.MySQLConnectionPool(
-	pool_name="mypool", 
-	pool_size=10,
-	pool_reset_session=True,
-	host=getenv("MYSQL_HOST"),
-	user=getenv("MYSQL_USER"),
-	password=getenv("MYSQL_PASSWORD"),
-	database=getenv("MYSQL_DATABASE")
-)
-
-def get_db_connection():
-	try:
-		return connection_pool.get_connection()
-	except:
-		print_exc()
-		logger.error(f"Error getting connection from pool")
-		return None
-
-def checkUser(user, psw):
-	conn = get_db_connection()
-	if not conn:
-		return False
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute("SELECT password_hash FROM users WHERE user = %s", (user,))
-		result = cursor.fetchone()
-		if result and checkpw(psw.encode(), result[0].encode()):
-			return True
-		return False
-	except:
-		print_exc()
-		return False
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
-
-
-def checkRoom(roomid: str, roompsw: str):
-	conn = get_db_connection()
-	if not conn:
-		return False
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute("SELECT password_hash, name FROM rooms WHERE roomid = %s", (roomid,))
-		result = cursor.fetchone()
-		if result and checkpw(roompsw.encode(), result[0].encode()):
-			return result[1]
-		return False
-	except:
-		print_exc()
-		return False
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
-
-async def get_video_history(roomid: str, limit: int = 15):
-	conn = get_db_connection()
-	if not conn:
-		return []
-	cursor = None
-	try:
-		cursor = conn.cursor()
-		cursor.execute(
-			"SELECT id, user, link, success, created_at FROM room_history WHERE roomid = %s ORDER BY id DESC LIMIT %s",
-			(roomid, limit)
-		)
-		results = cursor.fetchall()
-		history = []
-		for row in results:
-			entry = {
-				"id": row[0],
-				"user": row[1],
-				"url": row[2],
-				"success": bool(row[3]),
-				"date": row[4].strftime("%Y-%m-%d %H:%M") if row[4] else ""
-			}
-			history.append(entry)
-		return history
-	except:
-		print_exc()
-		return []
-	finally:
-		if cursor:
-			cursor.close()
-		conn.close()
 
 
 class ChatApp:
@@ -133,8 +50,8 @@ class ChatApp:
 		self.presence_grace_seconds = 5
 		self.keepalive_tasks = {}
 		self.last_pong = {}
-		self.keepalive_interval = 30
-		self.keepalive_timeout = 90
+		self.keepalive_interval = 20
+		self.keepalive_timeout = 50
 
 	def _disconnect_key(self, roomid, user):
 		return f"{roomid}:{user}"
@@ -285,7 +202,7 @@ class ChatApp:
 					logger.error(f"Error sending watchers update to {user_data['username']}")
 
 	async def send_video_history_to_websocket(self, websocket: WebSocket, roomid: str):
-		history = await get_video_history(roomid)
+		history = await async_db.get_video_history(roomid)
 		try:
 			if self.is_websocket_connected(websocket):
 				await websocket.send_text(dumps({
@@ -402,13 +319,18 @@ class ChatApp:
 		logger.info(f"disconnected: user`{user}` roomid`{roomid}` close_code`{close_code}`")
 
 	async def handle_message(self, websocket: WebSocket, data):
-		if data.get("type") == "server_pong":
+		msg_type = data.get("type")
+		if msg_type == "server_pong" or msg_type == "pong":
 			self.last_pong[websocket] = time()
-			user = self.get_user_from_websocket(websocket)
-			roomid = self.get_room_from_websocket(websocket)
-			# logger.debug(f"server_pong received: user`{user}` roomid`{roomid}`")
 			return
-		if data.get("type") == "watcher_update":
+		if msg_type == "ping":
+			self.last_pong[websocket] = time()
+			try:
+				await websocket.send_text(dumps({"type": "pong", "ts": time()}))
+			except:
+				pass
+			return
+		if msg_type == "watcher_update":
 			await self.handle_watcher_update(websocket, data)
 			return
 		elif data.get("type") == "request_user_image":
@@ -506,18 +428,8 @@ class ChatApp:
 		if not emoji or not reply_to:
 			return
 			
-		conn = get_db_connection()
-		if not conn:
-			return
-			
-		cursor = None
 		try:
-			cursor = conn.cursor()
-			cursor.execute(
-				"SELECT id, message, removed FROM messages WHERE roomid = %s AND user = %s AND message_type = 'new_reaction' AND reply_to = %s",
-				(roomid, user, reply_to)
-			)
-			existing_reaction = cursor.fetchone()
+			existing_reaction = await async_db.get_existing_reaction(roomid, user, reply_to)
 			
 			if existing_reaction:
 				reaction_id = existing_reaction[0]
@@ -525,11 +437,7 @@ class ChatApp:
 				is_removed = existing_reaction[2]
 				
 				if existing_emoji == emoji and not is_removed:
-					cursor.execute(
-						"UPDATE messages SET removed = 1 WHERE id = %s",
-						(reaction_id,)
-					)
-					conn.commit()
+					await async_db.mark_message_removed(reaction_id)
 					
 					data = {
 						"type": "reaction_removed",
@@ -552,18 +460,9 @@ class ChatApp:
 								logger.error(f"Error sending reaction removal to {user_data['username']}")
 					return
 				else:
-					cursor.execute(
-						"UPDATE messages SET message = %s, removed = 0 WHERE id = %s",
-						(emoji, reaction_id)
-					)
+					await async_db.update_reaction(reaction_id, emoji)
 			else:
-				cursor.execute(
-					"INSERT INTO messages (roomid, user, message, message_type, reply_to) VALUES (%s, %s, %s, %s, %s)",
-					(roomid, user, emoji, "new_reaction", reply_to)
-				)
-				reaction_id = cursor.lastrowid
-			
-			conn.commit()
+				reaction_id = await async_db.insert_message(roomid, user, emoji, "new_reaction", reply_to)
 			
 			data = {
 				"type": "new_reaction",
@@ -586,10 +485,6 @@ class ChatApp:
 						logger.error(f"Error sending reaction to {user_data['username']}")
 		except:
 			print_exc()
-		finally:
-			if cursor:
-				cursor.close()
-			conn.close()
 
 	async def handle_message_deletion(self, websocket: WebSocket, data):
 		user = self.get_user_from_websocket(websocket)
@@ -603,18 +498,8 @@ class ChatApp:
 		if not message_id:
 			return
 			
-		conn = get_db_connection()
-		if not conn:
-			return
-			
-		cursor = None
 		try:
-			cursor = conn.cursor()
-			cursor.execute(
-				"SELECT user, removed FROM messages WHERE id = %s AND roomid = %s",
-				(message_id, roomid)
-			)
-			result = cursor.fetchone()
+			result = await async_db.get_message_owner(message_id, roomid)
 			if not result:
 				return
 			message_owner, is_removed = result
@@ -624,17 +509,7 @@ class ChatApp:
 			if is_removed:
 				return
 			
-			cursor.execute(
-				"UPDATE messages SET removed = 1 WHERE id = %s",
-				(message_id,)
-			)
-			
-			cursor.execute(
-				"UPDATE messages SET removed = 1 WHERE reply_to = %s AND message_type = 'new_reaction'",
-				(message_id,)
-			)
-			
-			conn.commit()
+			await async_db.mark_message_removed(message_id)
 			
 			data = {
 				"type": "message_deleted",
@@ -654,137 +529,23 @@ class ChatApp:
 						logger.error(f"Error sending message deletion to {user_data['username']}")
 		except:
 			print_exc()
-		finally:
-			if cursor:
-				cursor.close()
-			conn.close()
 
 	async def send_history_to_websocket(self, websocket: WebSocket, roomid: str, lastMessageDate: float = 0, limit = 15, before_message_id = None):
 		try:
-			conn = get_db_connection()
-			if not conn:
-				logger.error("send_history_to_websocket: Failed to get database connection")
-				return
 			if limit > 15 or limit < 1:
 				logger.error("send_history_to_websocket: limit error:", limit)
 				return
-			cursor = None
-			try:
-				cursor = conn.cursor()
-				
-				if lastMessageDate > 0:
-					query = "SELECT id, user, message, message_type, date, reply_to, removed FROM messages \
-						WHERE roomid = %s AND UNIX_TIMESTAMP(date) > %s ORDER BY id ASC"
-					params = (roomid, lastMessageDate)
-				elif before_message_id:
-					query = """
-						SELECT id, user, message, message_type, date, reply_to, removed 
-						FROM messages 
-						WHERE roomid = %s AND id < %s AND message_type = 'new_message'
-						ORDER BY id DESC LIMIT %s
-					"""
-					params = (roomid, before_message_id, limit)
-				else:
-					query = """
-						SELECT id, user, message, message_type, date, reply_to, removed 
-						FROM messages 
-						WHERE roomid = %s AND message_type = 'new_message'
-						ORDER BY id DESC LIMIT %s
-					"""
-					params = (roomid, limit)
-				
-				cursor.execute(query, params)
-				message_rows = cursor.fetchall()
-				
-				messages = []
-				reaction_rows = []
-				
-				if message_rows:
-					message_ids = [str(row[0]) for row in message_rows]
-					if len(message_ids) > 0:
-						placeholders = ','.join(['%s'] * len(message_ids))
-						reaction_query = f"""
-							SELECT id, user, message, message_type, date, reply_to, removed
-							FROM messages 
-							WHERE roomid = %s AND message_type = 'new_reaction' AND reply_to IN ({placeholders})
-						"""
-						cursor.execute(reaction_query, [roomid] + message_ids)
-						reaction_rows = cursor.fetchall()
-				
-				all_rows = list(message_rows) + list(reaction_rows)
-				all_rows.sort(key=lambda x: x[0])
-				
-				if before_message_id:
-					all_rows = list(reversed(all_rows))
-				
-				for row in all_rows:
-					thedate = row[4].timestamp()
-					reply_to_data = None
-
-					if row[5]: # reply_to field
-						reply_cursor = conn.cursor()
-						reply_cursor.execute(
-							"SELECT user, message, removed FROM messages WHERE id = %s",
-							(row[5],)
-						)
-						reply_result = reply_cursor.fetchone()
-						if reply_result:
-							if reply_result[2]: # if message is removed
-								reply_to_data = {
-									"id": row[5],
-									"user": reply_result[0],
-									"message": None,
-									"is_deleted": True
-								}
-							else:
-								reply_to_data = {
-									"id": row[5],
-									"user": reply_result[0],
-									"message": reply_result[1],
-									"is_deleted": False
-								}
-						reply_cursor.close()
-					
-					messages.append({
-						"id": row[0],
-						"user": row[1],
-						"message": row[2],
-						"message_type": row[3],
-						"date": thedate,
-						"reply_to": reply_to_data if not bool(row[6]) else None, # None if message is removed
-						"is_deleted": bool(row[6]) # removed column
-					})
-				
-				has_more = False
-				if limit and len(message_rows) == limit:
-					check_cursor = conn.cursor()
-					if before_message_id:
-						oldest_message_id = min(row[0] for row in message_rows)
-						check_cursor.execute(
-							"SELECT COUNT(*) FROM messages WHERE roomid = %s AND id < %s AND message_type = 'new_message'",
-							(roomid, oldest_message_id)
-						)
-					else:
-						oldest_message_id = min(row[0] for row in message_rows)
-						check_cursor.execute(
-							"SELECT COUNT(*) FROM messages WHERE roomid = %s AND id < %s AND message_type = 'new_message'",
-							(roomid, oldest_message_id)
-						)
-					has_more = check_cursor.fetchone()[0] > 0
-					check_cursor.close()
-				
-				data = {
-					"type": "room_history",
-					"messages": messages,
-					"has_more": has_more,
-					"is_pagination": before_message_id is not None
-				}
-				if self.is_websocket_connected(websocket):
-					await websocket.send_text(dumps(data))
-			finally:
-				if cursor:
-					cursor.close()
-				conn.close()
+			
+			messages, has_more, is_pagination = await async_db.get_messages_history(roomid, lastMessageDate, before_message_id, limit)
+			
+			data = {
+				"type": "room_history",
+				"messages": messages,
+				"has_more": has_more,
+				"is_pagination": is_pagination
+			}
+			if self.is_websocket_connected(websocket):
+				await websocket.send_text(dumps(data))
 		except:
 			print_exc()
 
@@ -807,56 +568,21 @@ class ChatApp:
 			reply_to_data = None
 			
 			if reply_to_id:
-				conn = get_db_connection()
-				if conn:
-					cursor = None
-					try:
-						cursor = conn.cursor()
-						cursor.execute(
-							"SELECT user, message, removed FROM messages WHERE id = %s",
-							(reply_to_id,)
-						)
-						reply_result = cursor.fetchone()
-						if reply_result:
-							if reply_result[2]: # if message is removed
-								reply_to_data = {
-									"id": reply_to_id,
-									"user": reply_result[0],
-									"message": None,
-									"is_deleted": True
-								}
-							else:
-								reply_to_data = {
-									"id": reply_to_id,
-									"user": reply_result[0],
-									"message": reply_result[1],
-									"is_deleted": False
-								}
-					except:
-						print_exc()
-					finally:
-						if cursor:
-							cursor.close()
-						conn.close()
+				try:
+					reply_result = await async_db.get_message_by_id(reply_to_id)
+					if reply_result:
+						if reply_result[2]:
+							reply_to_data = {"id": reply_to_id, "user": reply_result[0], "message": None, "is_deleted": True}
+						else:
+							reply_to_data = {"id": reply_to_id, "user": reply_result[0], "message": reply_result[1], "is_deleted": False}
+				except:
+					print_exc()
 			
 			if not no_history:
-				conn = get_db_connection()
-				if conn:
-					cursor = None
-					try:
-						cursor = conn.cursor()
-						cursor.execute(
-							"INSERT INTO messages (roomid, user, message, message_type, reply_to) VALUES (%s, %s, %s, %s, %s)",
-							(roomid, sender, message, "new_message", reply_to_id)
-						)
-						conn.commit()
-						message_id = cursor.lastrowid # id of inserted
-					except:
-						print_exc()
-					finally:
-						if cursor:
-							cursor.close()
-						conn.close()
+				try:
+					message_id = await async_db.insert_message(roomid, sender, message, "new_message", reply_to_id)
+				except:
+					print_exc()
 
 			data = {
 				"type": "new_message",
@@ -877,33 +603,11 @@ class ChatApp:
 					logger.error(f"send_message_to_room: Error sending message to {user_data['username']}")
 			# maybe disconnect unavailable users?
 
-	def get_user_image(self, username: str):
-		if not username:
-			return ""
-		conn = get_db_connection()
-		if not conn:
-			return ""
-		cursor = None
-		try:
-			cursor = conn.cursor()
-			cursor.execute("SELECT imageurl FROM users WHERE user = %s", (username,))
-			result = cursor.fetchone()
-			if result and result[0]:
-				return result[0]
-			return ""
-		except:
-			print_exc()
-			return ""
-		finally:
-			if cursor:
-				cursor.close()
-			conn.close()
-
 	async def handle_user_image_request(self, websocket: WebSocket, data):
 		target_user = data.get("username")
 		if not target_user:
 			return
-		imageurl = self.get_user_image(target_user)
+		imageurl = await async_db.get_user_image(target_user)
 		response = {
 			"type": "user_image",
 			"username": target_user,
@@ -937,12 +641,12 @@ async def websocket_endpoint(
 		await websocket.close(code=1008, reason="Missing required parameters")
 		return
 
-	if not checkUser(user, psw):
+	if not await async_db.check_user(user, psw):
 		logger.error("Invalid user credentials")
 		await websocket.close(code=1008, reason="Invalid user credentials")
 		return
 
-	room_name = checkRoom(roomid, roompsw)
+	room_name = await async_db.check_room_get_name(roomid, roompsw)
 	if not room_name:
 		logger.error("Invalid room credentials")
 		await websocket.close(code=1008, reason="Invalid room credentials")
@@ -979,7 +683,7 @@ async def websocket_endpoint(
 							print_exc()
 						continue
 
-					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong", "video_history_update", "typing_start", "typing_stop"]:
+					if message_data.get("type") in ["send_message", "watcher_update", "request_user_image", "new_reaction", "delete_message", "load_more_messages", "server_pong", "pong", "video_history_update", "typing_start", "typing_stop"]:
 						await chat.handle_message(websocket, message_data)
 				except JSONDecodeError:
 					try:
