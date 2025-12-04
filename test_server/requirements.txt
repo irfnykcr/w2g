@@ -9,3 +9,4 @@ requests
 bcrypt==4.2.1
 mysql-connector-python
 httpx
+aiomysql
