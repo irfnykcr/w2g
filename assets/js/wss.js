@@ -17,6 +17,16 @@ const loggerWss = {
 	}
 }
 
+const escapeHtml = (str) => {
+	if (!str) return ''
+	return String(str)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#039;')
+}
+
 let replyState = {
     isReplying: false,
     replyToId: null,
@@ -246,11 +256,11 @@ function updateTypingIndicator(users) {
 	}
 	indicator.classList.remove('hidden')
 	if (users.length === 1) {
-		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span> is typing`
+		usernamesSpan.innerHTML = `<span class="italic">${escapeHtml(users[0])}</span> is typing`
 	} else if (users.length === 2) {
-		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span> and <span class="italic">${users[1]}</span> are typing`
+		usernamesSpan.innerHTML = `<span class="italic">${escapeHtml(users[0])}</span> and <span class="italic">${escapeHtml(users[1])}</span> are typing`
 	} else if (users.length === 3) {
-		usernamesSpan.innerHTML = `<span class="italic">${users[0]}</span>, <span class="italic">${users[1]}</span> and <span class="italic">${users[2]}</span> are typing`
+		usernamesSpan.innerHTML = `<span class="italic">${escapeHtml(users[0])}</span>, <span class="italic">${escapeHtml(users[1])}</span> and <span class="italic">${escapeHtml(users[2])}</span> are typing`
 	} else {
 		usernamesSpan.innerHTML = `<span class="italic">${users.length} people</span> are typing`
 	}
@@ -843,10 +853,11 @@ function updateWatchersList(watchers) {
         // const syncText = isIdle ? '' : (watcher.is_uptodate ? 'Synced' : 'Behind')
         
 		if (isNewElement) {
+			const safeUsername = escapeHtml(watcher.username)
 			watcherElement.innerHTML = `
 				<div class="watcher-avatar flex-shrink-0"></div>
                 <div class="flex flex-col min-w-0 flex-1">
-                    <div class="font-medium text-[${getUserColor(watcher.username)}] truncate text-xs watcher-username">${watcher.username}</div>
+                    <div class="font-medium text-[${getUserColor(watcher.username)}] truncate text-xs watcher-username">${safeUsername}</div>
                     <div class="flex items-center gap-1 text-xs text-gray-400">
                         <span class="watcher-status">${statusIcon} ${formattedTime}</span>
                         <span class="watcher-sync">${syncIcon}</span>
@@ -1128,8 +1139,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 			// loggerWss.debug("Message received", data)
 
 			if (data.type == "room_info") {
-				if (chatRoomName) chatRoomName.innerHTML = `Chat - ${data.room_name}`
-				if (inputRoomName) inputRoomName.innerHTML = `Watch Video - ${data.room_name}`
+				const safeRoomName = escapeHtml(data.room_name)
+				if (chatRoomName) chatRoomName.innerHTML = `Chat - ${safeRoomName}`
+				if (inputRoomName) inputRoomName.innerHTML = `Watch Video - ${safeRoomName}`
 				
 				if (!isCurrentlyWatching) {
 					sendWatcherUpdate(false)
@@ -1566,37 +1578,39 @@ document.addEventListener("DOMContentLoaded", async () => {
 		messageDiv.setAttribute('data-message-user', user)
 		messageDiv.setAttribute('data-message-date', messageTimestamp.toString())
 		
+		const safeUser = escapeHtml(user)
 		let replyContent = ''
 		if (replyTo) {
+			const safeReplyUser = escapeHtml(replyTo.user)
 			if (replyTo.is_deleted) {
 				replyContent = `
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs" 
 						 title="Original message was deleted">
-						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${safeReplyUser}</span></div>
 						<div class="text-gray-500 mt-1"><em>Original message was deleted</em></div>
 					</div>
 				`
 			} else {
 				let reply_txt = ""
 				if (replyTo.message.length > 25){
-					reply_txt = `${replyTo.message.substring(0, 25)}...`
+					reply_txt = escapeHtml(replyTo.message.substring(0, 25)) + "..."
 				} else {
-					reply_txt = replyTo.message
+					reply_txt = escapeHtml(replyTo.message)
 				}
 				replyContent = `
 					<div class="mb-2 p-2 bg-gray-700 rounded border-l-2 border-gray-500 text-xs cursor-pointer hover:bg-gray-600 transition-colors duration-200" 
 						 onclick="scrollToMessage(${replyTo.id})" 
 						 title="Click to scroll to original message">
-						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${replyTo.user}</span></div>
+						<div class="text-gray-400">Replying to <span class="text-[${getUserColor(replyTo.user)}] font-semibold">${safeReplyUser}</span></div>
 						<div class="text-gray-300 mt-1">${reply_txt}</div>
 					</div>
 				`
 			}
 		}
 
-		const processedContent = window.processMessageContent ? window.processMessageContent(text) : text
+		const processedContent = window.processMessageContent ? window.processMessageContent(text) : escapeHtml(text)
 		const avatarSection = user !== "system" ? `
-			<div class="message-avatar flex items-center gap-2" data-message-avatar="${user}">
+			<div class="message-avatar flex items-center gap-2" data-message-avatar="${safeUser}">
 				${buildMessageAvatarInner(user)}
 			</div>
 		` : ''
@@ -1606,7 +1620,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			<div class="message-header flex justify-between items-start mb-2">
 				<div id="message-user-info" class="flex items-center gap-2">
 					${avatarSection}
-					<span class="font-semibold ${user === "system" ? "text-admin" : ""} text-sm break-words" style="${user !== "system" ? `color: ${userColor}` : ""}">${user}</span>
+					<span class="font-semibold ${user === "system" ? "text-admin" : ""} text-sm break-words" style="${user !== "system" ? `color: ${userColor}` : ""}">${safeUser}</span>
 				</div>
 				<div class="message-actions flex items-center gap-2 text-xs text-gray-500 ml-2 flex-shrink-0">
 					<span class="header-date">${fulldate.toLocaleDateString()}</span>

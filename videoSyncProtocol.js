@@ -8,7 +8,8 @@ const OP = {
     INIT: 0x05,
     ACK: 0x06,
     UPTODATE: 0x07,
-    SUBTITLE_FLAG: 0x08
+    SUBTITLE_FLAG: 0x08,
+    AUTH: 0x09
 }
 
 const ACK_SUCCESS = 1
@@ -16,6 +17,7 @@ const ACK_FAIL = 0
 
 const MAX_TIME = 0xFFFFFFFF
 const MAX_URL_LENGTH = 2048
+const MAX_CRED_LENGTH = 255
 
 class VideoSyncClient {
     constructor(logger) {
@@ -88,6 +90,27 @@ class VideoSyncClient {
         const buf = Buffer.alloc(2)
         buf.writeUInt8(OP.UPTODATE, 0)
         buf.writeUInt8(requestId & 0x7F, 1)
+        return buf
+    }
+
+    encodeAuth(user, userPsw, roomId, roomPsw) {
+        const userBuf = Buffer.from(user.slice(0, MAX_CRED_LENGTH), 'utf8')
+        const pswBuf = Buffer.from(userPsw.slice(0, MAX_CRED_LENGTH), 'utf8')
+        const roomBuf = Buffer.from(roomId.slice(0, MAX_CRED_LENGTH), 'utf8')
+        const roomPswBuf = Buffer.from(roomPsw.slice(0, MAX_CRED_LENGTH), 'utf8')
+        // AUTH: 1B op, 1B userLen, nB user, 1B pswLen, nB psw, 1B roomLen, nB room, 1B roomPswLen, nB roomPsw
+        const totalLen = 1 + 1 + userBuf.length + 1 + pswBuf.length + 1 + roomBuf.length + 1 + roomPswBuf.length
+        const buf = Buffer.alloc(totalLen)
+        let offset = 0
+        buf.writeUInt8(OP.AUTH, offset++)
+        buf.writeUInt8(userBuf.length, offset++)
+        userBuf.copy(buf, offset); offset += userBuf.length
+        buf.writeUInt8(pswBuf.length, offset++)
+        pswBuf.copy(buf, offset); offset += pswBuf.length
+        buf.writeUInt8(roomBuf.length, offset++)
+        roomBuf.copy(buf, offset); offset += roomBuf.length
+        buf.writeUInt8(roomPswBuf.length, offset++)
+        roomPswBuf.copy(buf, offset)
         return buf
     }
 
@@ -193,7 +216,7 @@ class VideoSyncClient {
             this.ws = null
         }
 
-        const wsUrl = `wss://${serverEndpoint}/videosync/?user=${encodeURIComponent(user)}&psw=${encodeURIComponent(userPsw)}&roomid=${encodeURIComponent(roomId)}&roompsw=${encodeURIComponent(roomPsw)}`
+        const wsUrl = `wss://${serverEndpoint}/videosync/`
 
         return new Promise((resolve) => {
             try {
@@ -201,13 +224,26 @@ class VideoSyncClient {
                 this.ws.binaryType = 'nodebuffer'
 
                 this.ws.on('open', () => {
-                    this.logger.info('VideoSync binary WebSocket connected')
-                    this.state.isUpToDate = false
-                    if (this.onConnectionChange) this.onConnectionChange(true)
-                    resolve(true)
+                    this.logger.info('VideoSync WebSocket connected, sending auth...')
+                    const authMsg = this.encodeAuth(user, userPsw, roomId, roomPsw)
+                    this.ws.send(authMsg)
                 })
 
                 this.ws.on('message', (data) => {
+                    const msg = this.decodeMessage(data)
+                    if (msg && msg.type === 'ack' && !this.state.isUpToDate) {
+                        if (msg.success) {
+                            this.logger.info('VideoSync auth successful')
+                            this.state.isUpToDate = false
+                            if (this.onConnectionChange) this.onConnectionChange(true)
+                            resolve(true)
+                        } else {
+                            this.logger.error('VideoSync auth failed:', msg.error)
+                            this.ws.close()
+                            resolve(false)
+                        }
+                        return
+                    }
                     this.handleMessage(data)
                 })
 
@@ -312,13 +348,18 @@ class VideoSyncClient {
             return { success: false, error: 'Not connected' }
         }
 
-        const requestId = (++this.requestId) & 0x7F
-        if (requestId === 0) this.requestId = 1
+        this.requestId = (this.requestId % 126) + 1
+        const requestId = this.requestId
         buffer.writeUInt8((buffer.readUInt8(1) & 0x80) | requestId, 1)
 
         if (!expectAck) {
             this.ws.send(buffer)
             return { success: true }
+        }
+
+        if (this.pendingRequests.has(requestId)) {
+            this.pendingRequests.get(requestId).resolve({ success: false, error: 'ID reused' })
+            this.pendingRequests.delete(requestId)
         }
 
         return new Promise((resolve, reject) => {

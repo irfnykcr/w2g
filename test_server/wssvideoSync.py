@@ -1,5 +1,5 @@
 from traceback import print_exc
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from bcrypt import checkpw
 from mysql.connector import pooling
@@ -31,13 +31,44 @@ ROOMID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 
 app = FastAPI()
 
+ALLOWED_ORIGINS = [
+	"app://.",
+	"file://",
+]
+
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=["*"],
+	allow_origin_regex=r"^(app://\.|file://|null)$",
 	allow_credentials=True,
-	allow_methods=["*"],
-	allow_headers=["*"],
+	allow_methods=["GET", "POST"],
+	allow_headers=["Content-Type", "Authorization"],
 )
+
+from collections import defaultdict
+import time as time_module
+
+class RateLimiter:
+	def __init__(self, max_requests: int = 30, window_seconds: int = 60):
+		self.max_requests = max_requests
+		self.window_seconds = window_seconds
+		self.requests = defaultdict(list)
+	
+	def is_allowed(self, key: str) -> bool:
+		now = time_module.time()
+		self.requests[key] = [t for t in self.requests[key] if now - t < self.window_seconds]
+		if len(self.requests[key]) >= self.max_requests:
+			return False
+		self.requests[key].append(now)
+		return True
+	
+	def cleanup(self):
+		now = time_module.time()
+		keys_to_delete = [k for k, v in self.requests.items() if not v or now - max(v) > self.window_seconds * 2]
+		for k in keys_to_delete:
+			del self.requests[k]
+
+rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
+ws_rate_limiter = RateLimiter(max_requests=100, window_seconds=10)
 
 connection_pool = pooling.MySQLConnectionPool(
 	pool_name="mypool", 
@@ -357,16 +388,17 @@ class VideoSyncHandler:
 
 		elif msg_type == 'time':
 			timeout_pass = msg.get('timeout_pass', False)
+			time_val = min(max(0, int(msg.get('time', 0))), 0xFFFFFFFF)
 			if room.can_update(user, 'time', timeout_pass):
-				room.state.time = msg['time']
+				room.state.time = time_val
 				room.state.time_user = user
 				
 				if timeout_pass:
-					broadcast_data = BinaryProtocol.encode_time(msg['time'], 0, passive=True)
+					broadcast_data = BinaryProtocol.encode_time(time_val, 0, passive=True)
 					await self.broadcast(room, broadcast_data, exclude_user=user)
 				else:
 					room.mark_all_not_uptodate(user)
-					broadcast_data = BinaryProtocol.encode_time(msg['time'], 0, passive=False)
+					broadcast_data = BinaryProtocol.encode_time(time_val, 0, passive=False)
 					await self.broadcast(room, broadcast_data, exclude_user=user)
 				
 				ack = BinaryProtocol.encode_ack(True, request_id)
@@ -376,14 +408,15 @@ class VideoSyncHandler:
 				await websocket.send_bytes(ack)
 
 		elif msg_type == 'state':
+			time_val = min(max(0, int(msg.get('time', 0))), 0xFFFFFFFF)
 			if room.can_update(user, 'state'):
 				room.state.is_playing = msg['is_playing']
-				room.state.time = msg['time']
+				room.state.time = time_val
 				room.state.playing_user = user
 				room.state.time_user = user
 				room.mark_all_not_uptodate(user)
 				
-				broadcast_data = BinaryProtocol.encode_state(msg['is_playing'], msg['time'], 0)
+				broadcast_data = BinaryProtocol.encode_state(msg['is_playing'], time_val, 0)
 				await self.broadcast(room, broadcast_data, exclude_user=user)
 				
 				ack = BinaryProtocol.encode_ack(True, request_id)
@@ -425,36 +458,61 @@ video_sync = VideoSyncHandler()
 
 
 @app.websocket("/videosync/")
-async def websocket_endpoint(
-	websocket: WebSocket,
-	user: str = Query(...),
-	psw: str = Query(...),
-	roomid: str = Query(...),
-	roompsw: str = Query(...),
-):
+async def websocket_endpoint(websocket: WebSocket):
 	await websocket.accept()
+	
+	try:
+		data = await websocket.receive_bytes()
+	except WebSocketDisconnect:
+		return
+	except Exception as e:
+		logger.error(f"WS auth receive error: {e}")
+		return
+	
+	msg = BinaryProtocol.decode(data)
+	if not msg or msg.get('type') != 'auth':
+		logger.error("First message must be AUTH")
+		ack = BinaryProtocol.encode_ack(False, 0, "auth required")
+		await websocket.send_bytes(ack)
+		await websocket.close(code=1008, reason="Auth required")
+		return
+	
+	user = msg.get('user', '')
+	psw = msg.get('psw', '')
+	roomid = msg.get('roomid', '')
+	roompsw = msg.get('roompsw', '')
 
 	if not (user and psw and roomid and roompsw):
-		logger.error("Missing required parameters")
-		await websocket.close(code=1008, reason="Missing required parameters")
+		logger.error("Missing auth parameters")
+		ack = BinaryProtocol.encode_ack(False, 0, "missing parameters")
+		await websocket.send_bytes(ack)
+		await websocket.close(code=1008, reason="Missing parameters")
 		return
 
 	if not checkUser(user, psw):
 		logger.error("Invalid user credentials")
-		await websocket.close(code=1008, reason="Invalid user credentials")
+		ack = BinaryProtocol.encode_ack(False, 0, "invalid user")
+		await websocket.send_bytes(ack)
+		await websocket.close(code=1008, reason="Invalid user")
 		return
 
 	if not is_valid_roomid(roomid):
 		logger.error("Invalid roomid format")
+		ack = BinaryProtocol.encode_ack(False, 0, "invalid room format")
+		await websocket.send_bytes(ack)
 		await websocket.close(code=1008, reason="Invalid room format")
 		return
 
 	if not checkRoom(roomid, roompsw):
 		logger.error("Invalid room credentials")
-		await websocket.close(code=1008, reason="Invalid room credentials")
+		ack = BinaryProtocol.encode_ack(False, 0, "invalid room")
+		await websocket.send_bytes(ack)
+		await websocket.close(code=1008, reason="Invalid room")
 		return
 
-	logger.info(f"WS accepted: {user}@{roomid}")
+	ack = BinaryProtocol.encode_ack(True, 0)
+	await websocket.send_bytes(ack)
+	logger.info(f"WS auth OK: {user}@{roomid}")
 
 	try:
 		if not await video_sync.handle_connect(websocket, user, roomid):
@@ -465,6 +523,9 @@ async def websocket_endpoint(
 				data = await websocket.receive_bytes()
 				if len(data) > MAX_WS_MESSAGE_SIZE:
 					logger.error(f"Message too large from {user}: {len(data)}")
+					continue
+				if not ws_rate_limiter.is_allowed(f"ws:{user}:{roomid}"):
+					logger.warn(f"Rate limited WS user: {user}")
 					continue
 				await video_sync.handle_message(websocket, data, user, roomid)
 			except WebSocketDisconnect:
@@ -483,6 +544,9 @@ async def websocket_endpoint(
 
 @app.post('/login_user')
 async def login_user(request: Request):
+	client_ip = request.client.host if request.client else "unknown"
+	if not rate_limiter.is_allowed(f"login:{client_ip}"):
+		return {"status": False, "error": "Rate limited"}
 	data = await request.json()
 	user = str(data.get("user", ""))
 	psw = str(data.get("psw", ""))
@@ -491,6 +555,9 @@ async def login_user(request: Request):
 
 @app.post('/login_room')
 async def login_room(request: Request):
+	client_ip = request.client.host if request.client else "unknown"
+	if not rate_limiter.is_allowed(f"login:{client_ip}"):
+		return {"status": False, "error": "Rate limited"}
 	data = await request.json()
 	room = str(data.get("room", ""))
 	psw = str(data.get("psw", ""))
