@@ -1004,6 +1004,8 @@ const setVideoToServer = async (url) => {
 			}
 		} else if (result.history_entry && mainWindow && mainWindow.webContents) {
 			mainWindow.webContents.send('video-history-update-broadcast', result.history_entry)
+		} else {
+			logger.warn("setVideoToServer failed:", result.error || 'Unknown error')
 		}
 		
 		return result

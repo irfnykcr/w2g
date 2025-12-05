@@ -442,10 +442,15 @@ async def setvideourl_offline(request: Request):
 		return {"status": False, "error": "Invalid room credentials"}
 	
 	url_valid = check_url(new_url)
-	history_entry = await async_db.add_to_history(roomid, user, new_url, url_valid)
-	
 	if not url_valid:
-		return {"status": False, "error": "Invalid URL", "history_entry": history_entry}
+		return {"status": False, "error": "Invalid URL"}
+	
+	last_url = await async_db.get_last_video_url(roomid)
+	if last_url == new_url:
+		logger.info(f"setvideourl_offline: same URL, skipping {user}@{roomid}")
+		return {"status": False, "error": "URL is the same as the current one"}
+	
+	history_entry = await async_db.add_to_history(roomid, user, new_url, url_valid)
 	
 	room = room_manager.get_or_create_room(roomid)
 	room.state.url = new_url

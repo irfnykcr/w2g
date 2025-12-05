@@ -57,7 +57,45 @@ const defaultMovieApiConfig = {
 	}
 }
 
+const isDefaultDomainRedirected = async (domain) => {
+	const is_redirected = await fetch(domain, {
+		method: 'GET',
+		headers: {
+			'Accept': 'text/html charset=UTF-8',
+			'X-Requested-With': 'XMLHttpRequest'
+		},
+		redirect: 'follow'
+	})
+	.then(response => {
+		let url = response.url
+		if (url.endsWith('/') ) {
+			url = url.slice(0, -1)
+		}
+		loggerMovieModal.info('Checked default domain:', domain, 'Redirected:', response.redirected, 'Final URL:', url)
+		return [response.redirected, url]
+	})
+	.catch(error => {
+		loggerMovieModal.error('Error checking default domain:', error)
+		return false
+	})
+	return is_redirected
+}
+
 let movieApiConfig = JSON.parse(JSON.stringify(defaultMovieApiConfig))
+let movieApiInitPromise = null
+
+async function checkAndFixDomains() {
+	const filmmodu_check = await isDefaultDomainRedirected(movieApiConfig.filmmodu)
+	if (filmmodu_check && filmmodu_check[0]) {
+		movieApiConfig.filmmodu = filmmodu_check[1]
+		loggerMovieModal.warn('filmmodu domain redirected to:', filmmodu_check[1])
+	}
+	const webteizle_check = await isDefaultDomainRedirected(movieApiConfig.webteizle)
+	if (webteizle_check && webteizle_check[0]) {
+		movieApiConfig.webteizle = webteizle_check[1]
+		loggerMovieModal.warn('webteizle domain redirected to:', webteizle_check[1])
+	}
+}
 
 async function loadMovieApiConfig() {
 	if (window.electronAPI && window.electronAPI.getMovieApiConfig) {
@@ -74,7 +112,13 @@ async function saveMovieApiConfig() {
 	}
 }
 
-loadMovieApiConfig()
+async function initMovieApi() {
+	await loadMovieApiConfig()
+	await checkAndFixDomains()
+	loggerMovieModal.info('Movie API initialized')
+}
+
+movieApiInitPromise = initMovieApi()
 
 let settingsModalInstance = null
 
@@ -307,12 +351,10 @@ const service_domains = () => movieApiConfig.services
  * @returns {number|null}
 */
 function extractid_webteizle(img_link) {
-	loggerMovieModal.info("Extracting ID from img_link:", img_link)
 	const id = img_link.replace("file://","")
 											.replace("/i/afis/a","")
 											.replace("/i/afis/b/a","")
 											.split(".")[0]
-	loggerMovieModal.info("Extracted ID:", id)
 	return id
 }
 
@@ -347,7 +389,6 @@ async function getlist_webteizle(name, page=1) {
 			const imgEl = doc.querySelector(".image").querySelector("img")
 			const aEl = doc.querySelector('[data-ajax="#sol"]')
 			const movie_img = `${webteizle_domain()}/${imgEl.dataset.src}`
-			loggerMovieModal.info("imgEl.src:", imgEl.dataset.src)
 			const movieId = extractid_webteizle(imgEl.dataset.src)
 			const movie_title = aEl.innerText
 			// const movie_source = `${webteizle_domain()}/${aEl.href}`
@@ -366,7 +407,6 @@ async function getlist_webteizle(name, page=1) {
 			items.forEach(item => {
 				const imgEl = item.querySelector("img")
 				const movie_title = item.querySelector(".filmname").innerText
-				loggerMovieModal.info("imgEl.src:", imgEl.dataset.src)
 				const movie_id = extractid_webteizle(imgEl.dataset.src)
 				const movie_img = `${webteizle_domain()}/${imgEl.dataset.src}`
 				
@@ -510,7 +550,6 @@ async function getsource_serviceURL(service_name, sources_service) {
  * @returns {Array}
 */
 async function getsource_webteizle(videoID, preferredSource=null) {
-	loggerMovieModal.info("Getting source for videoID:", videoID, "with preferredSource:", preferredSource)
 	const r = await fetch(`${webteizle_domain()}/ajax/dataAlternatif3.asp`, {
 		method: 'POST',
 		headers: {
@@ -535,7 +574,6 @@ async function getsource_webteizle(videoID, preferredSource=null) {
 			})
 			if (preferredSource && sources[preferredSource]){
 				const parsed = await getsource_serviceURL(preferredSource, sources[preferredSource])
-				loggerMovieModal.info("preffered found for:", preferredSource, parsed)
 				return { videoUrl: parsed, availableSources: sources, usedSource: preferredSource }
 			}
 			let selectedSource = null
@@ -553,7 +591,6 @@ async function getsource_webteizle(videoID, preferredSource=null) {
 
 			if (selectedSource) {
 				const parsed = await getsource_serviceURL(selectedSource, sources[selectedSource])
-				loggerMovieModal.info("selectedSource found for:", selectedSource, parsed)
 				return { videoUrl: parsed, availableSources: sources, usedSource: selectedSource }
 			}
 			loggerMovieModal.warn("no source found")
@@ -739,6 +776,8 @@ async function searchMovies(query, page, source, listContainer, loadingEl, pagin
 	loadingEl.classList.remove('hidden')
 	paginationEl.classList.add('hidden')
 	
+	await movieApiInitPromise
+	
 	const prevBtn = paginationEl.querySelector('#movie-prev-page')
 	
 	try {
@@ -848,7 +887,6 @@ async function loadMovieSource(movie, source, sourceConfig, statusEl, watchBtn, 
 			})
 			
 			if (subtitleUrl && source === 'filmmodu') {
-				loggerMovieModal.info('Showing subtitle button for:', subtitleUrl)
 				subBtn.classList.remove('hidden')
 				if (isUserWatching) {
 					subBtn.classList.remove('opacity-50', 'cursor-not-allowed')

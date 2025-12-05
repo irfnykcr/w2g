@@ -109,15 +109,34 @@ async def get_user_image(username: str) -> str:
 		logger.error(f"get_user_image error: {e}")
 		return ""
 
+async def get_last_video_url(roomid: str) -> str:
+	if not roomid:
+		return ""
+	try:
+		p = await get_pool()
+		async with p.acquire() as conn:
+			async with conn.cursor() as cursor:
+				await cursor.execute("SELECT url FROM plyr_status WHERE roomid = %s", (roomid,))
+				result = await cursor.fetchone()
+				if result and result[0]:
+					return result[0]
+		return ""
+	except Exception as e:
+		logger.error(f"get_last_video_url error: {e}")
+		return ""
+
 async def add_to_history(roomid: str, user: str, url: str, success: bool):
 	try:
 		p = await get_pool()
 		async with p.acquire() as conn:
 			async with conn.cursor() as cursor:
-				await cursor.execute(
+				_insert = await cursor.execute(
 					"INSERT INTO room_history (roomid, user, link, success) VALUES (%s, %s, %s, %s)",
 					(roomid, user, url, 1 if success else 0)
 				)
+				if not _insert:
+					logger.error(f"Failed to insert history entry for roomid'{roomid}'.")
+					return None
 				return {
 					"id": cursor.lastrowid,
 					"user": user,
