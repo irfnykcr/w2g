@@ -137,8 +137,16 @@ function handleGifPickerOpen(e) {
 	}
 
 	showGifModal()
-	loadFeaturedGifs()
-	populateEmojis()
+	
+	const gifGrid = document.getElementById('gif-grid')
+	if (!gifGrid || gifGrid.children.length === 0) {
+		loadFeaturedGifs()
+	}
+	
+	const emojiGrid = document.getElementById('emoji-grid')
+	if (!emojiGrid || emojiGrid.children.length === 0) {
+		populateEmojis()
+	}
 	
 	setTimeout(() => {
 		const searchInput = document.getElementById('gif-search')
@@ -151,9 +159,6 @@ function showGifModal() {
 	const button = document.getElementById('gif-picker-btn')
 	
 	if (!modal || !button) return
-
-	const modalSearchInputEl = modal.querySelector('#gif-search')
-	modalSearchInputEl.value = ""
 
 	modal.classList.remove('hidden')
 	positionModalAboveButton(modal, button)
@@ -176,14 +181,14 @@ function positionModalAboveButton(modal, button) {
 	let modalWidth, modalHeight
 	
 	if (isMobile) {
-		modalWidth = Math.min(window.innerWidth - 20, 350)
-		modalHeight = Math.min(window.innerHeight - 40, 300)
+		modalWidth = Math.min(window.innerWidth - 20, 380)
+		modalHeight = Math.min(window.innerHeight - 40, 400)
 	} else if (isTablet) {
-		modalWidth = 400
-		modalHeight = 350
-	} else {
 		modalWidth = 450
-		modalHeight = 400
+		modalHeight = 450
+	} else {
+		modalWidth = 520
+		modalHeight = 500
 	}
 	
 	let top = buttonRect.top - modalHeight - 15
@@ -301,7 +306,7 @@ async function loadFeaturedGifs() {
 		
 		showGifLoading('Loading featured GIFs...')
 		
-		const response = await fetch(`${TENOR_FEATURED_URL}?key=${TENOR_API_KEY}&limit=20&media_filter=gif`)
+		const response = await fetch(`${TENOR_FEATURED_URL}?key=${TENOR_API_KEY}&limit=20&media_filter=gif&locale=tr_TR`)
 		
 		if (!response.ok) {
 			throw new Error(`HTTP ${response.status}: ${response.statusText}`)

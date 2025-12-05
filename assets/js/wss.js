@@ -283,19 +283,19 @@ function clearNotificationGlow() {
 	const glowElement = document.getElementById('chat-notification-glow')
 	if (glowElement) {
 		glowElement.classList.add('hidden')
-		loggerWss.debug("clearNotificationGlow: glow element found and hidden class added")
+		// loggerWss.debug("clearNotificationGlow: glow element found and hidden class added")
 	} else {
 		loggerWss.error("clearNotificationGlow: glow element not found!")
 	}
 }
 
 function showNotificationGlow() {
-	loggerWss.debug("showNotificationGlow: showing glow")
+	// loggerWss.debug("showNotificationGlow: showing glow")
 	hasUnreadMessages = true
 	const glowElement = document.getElementById('chat-notification-glow')
 	if (glowElement) {
 		glowElement.classList.remove('hidden')
-		loggerWss.debug("showNotificationGlow: glow element found and hidden class removed")
+		// loggerWss.debug("showNotificationGlow: glow element found and hidden class removed")
 	} else {
 		loggerWss.error("showNotificationGlow: glow element not found!")
 	}
@@ -322,27 +322,6 @@ function chatStatus(status) {
 		chatRoomName.textContent += " (connection failed!)"
 	}
 }
-
-
-// function getUserImageUrl() {
-// 	const messages = Array.from(messagesById.values())
-// 	const userMessages = messages.filter(msg => {
-// 		const userSpan = msg.querySelector('span.font-semibold')
-// 		return userSpan && !userSpan.classList.contains('text-admin')
-// 	})
-	
-// 	for (let i = userMessages.length - 1; i >= 0; i--) {
-// 		const messageContent = userMessages[i].querySelector('div:last-child')
-// 		if (messageContent) {
-// 			const gifImg = messageContent.querySelector('img[src*="tenor.com"]')
-// 			if (gifImg) {
-// 				return gifImg.src
-// 			}
-// 		}
-// 	}
-	
-// 	return ''
-// }
 
 function initializeReplySystem() {
     const closeReplyBtn = document.getElementById('close-reply')

@@ -8,7 +8,6 @@ from json import loads, dumps
 from json import JSONDecodeError
 from time import time
 from dotenv import load_dotenv
-from os import getenv
 import async_db
 load_dotenv()
 

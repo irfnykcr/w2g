@@ -6,7 +6,6 @@ const fs = require('fs')
 const secureStorage = require('./secureStorage.js')
 const { Menu } = require('electron')
 const { create: createYoutubeDl } = require('youtube-dl-exec')
-const WebSocket = require('ws')
 const UpdateManager = require('./updateManager.js')
 const os = require('os')
 const { VideoSyncManager } = require('./videoSyncManager.js')
@@ -396,8 +395,6 @@ let isInlineWatching = false
 let modeTransitionLock = false
 
 let isClientUpToDate = false
-let lastConnectionAttempt = 0
-let reconnectCount = 0
 let reconnectTimeout = null
 let networkMonitorInterval = null
 let isOnline = true
@@ -417,6 +414,8 @@ const createWindow = async () => {
 	const win = new BrowserWindow({
 		width: 1280,
 		height: 720,
+		minHeight: 730,
+		minWidth: 370,
 		webPreferences: {
 			contextIsolation: true,
 			preload: path.join(__dirname, 'preload.js')
@@ -546,7 +545,7 @@ const handleOfflineEvent = () => {
 	}
 
 	abortVLC()
-	abortInline()
+	// abortInline()
 }
 
 const startNetworkMonitoring = () => {
@@ -578,9 +577,9 @@ const connectVideoSyncWS = async () => {
 	videoSyncManager.onUrlChange = async (url) => {
 		currentVLCStatus.url = url
 		if (isInlineWatching) {
-			const processedUrl = await checkVideoUrl(url)
-			const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
-			mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+			// const processedUrl = await checkVideoUrl(url)
+			// const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+			// mainWindow.webContents.send('inline-video-set', { url: finalUrl })
 		} else if (isVLCwatching) {
 			await setVideoVLC(url)
 		}
@@ -698,9 +697,6 @@ const makeRequest_videoSync = async (type, data = {}) => {
 				break
 			case 'update_isplaying':
 				result = await videoSyncManager.updateState(data.is_playing, data.new_time || 0)
-				break
-			case 'update_url':
-				result = await videoSyncManager.updateUrl(data.new_url)
 				break
 			case 'get_playerstatus':
 				result = await videoSyncManager.requestSync()
@@ -824,7 +820,7 @@ const abortVLC = async (is_videochange=false) => {
 	}
 	
 	isVLCwatching = false
-	videoSyncManager.setWatchingState(false, isInlineWatching)
+	// videoSyncManager.setWatchingState(false, isInlineWatching)
 	if (vlcInterval){
 		clearInterval(vlcInterval)
 		vlcInterval = null
@@ -964,6 +960,61 @@ const setVideoVLC = async (_url) => {
 	}
 }
 
+let isSettingVideo = false
+
+const setVideoToServer = async (url) => {
+	if (isSettingVideo) {
+		logger.warn("setVideoToServer: already setting video, skipping")
+		return { status: false, error: "Already setting video" }
+	}
+	
+	if (!isValidVideoUrl(url)) {
+		logger.warn("Invalid video URL rejected:", url.substring(0, 100))
+		return { status: false, error: "Invalid URL" }
+	}
+	
+	if (currentVLCStatus.url === url) {
+		logger.info("Same video URL (cached), skipping update")
+		return { status: true, skipped: true }
+	}
+	
+	isSettingVideo = true
+	try {
+		logger.info("setVideoToServer:", url)
+		subtitleCache.clear()
+		
+		const result = await axios.post(
+			`https://${SERVER_ENDPOINT}/setvideourl_offline`,
+			{
+				user: USERID,
+				psw: await secureStorage.getPassword("turkuazz", "userpsw"),
+				room: ROOMID,
+				roompsw: await secureStorage.getPassword("turkuazz", "roompsw"),
+				new_url: url
+			}
+		).then(r => r.data)
+		
+		if (result.status) {
+			currentVLCStatus.url = url
+			if (mainWindow && mainWindow.webContents) {
+				mainWindow.webContents.send('subtitle-status', { subtitle_exist: false })
+				if (result.history_entry) {
+					mainWindow.webContents.send('video-history-update-broadcast', result.history_entry)
+				}
+			}
+		} else if (result.history_entry && mainWindow && mainWindow.webContents) {
+			mainWindow.webContents.send('video-history-update-broadcast', result.history_entry)
+		}
+		
+		return result
+	} catch (error) {
+		logger.error("setVideoToServer error:", error.message)
+		return { status: false, error: error.message }
+	} finally {
+		isSettingVideo = false
+	}
+}
+
 ipcMain.handle('setvideo-vlc', async (_, url) => {
 	try {
 		if (typeof url !== 'string' || !url.trim()) {
@@ -971,78 +1022,10 @@ ipcMain.handle('setvideo-vlc', async (_, url) => {
 		}
 		url = url.trim()
 		
-		if (!isValidVideoUrl(url)) {
-			logger.warn("Invalid video URL rejected:", url.substring(0, 100))
-			return false
-		}
-		
-		if (currentVLCStatus.url === url) {
-			logger.info("Same video URL (cached), skipping update")
-			return true
-		}
-		
-		if (!currentVLCStatus.url) {
-			const r = await axios.post(
-				`https://${SERVER_ENDPOINT}/get_current_url`,
-				{
-					room: ROOMID,
-					roompsw: await secureStorage.getPassword("turkuazz", "roompsw")
-				},
-				{ timeout: 2000 }
-			)
-			if (r.data && r.data.status && r.data.url === url) {
-				currentVLCStatus.url = url
-				logger.info("Same video URL (http), skipping update")
-				return true
-			}
-		}
-		
-		logger.info("update_url", url)
-		subtitleCache.clear()
-		
-		let result = { status: false }
-		if (videoSyncManager.isConnected()) {
-			result = await makeRequest_videoSync("update_url", {"new_url": url})
-		} else {
-			result = await axios.post(
-				`https://${SERVER_ENDPOINT}/setvideourl_offline`,
-				{
-					user: USERID,
-					psw: await secureStorage.getPassword("turkuazz", "userpsw"),
-					room: ROOMID,
-					roompsw: await secureStorage.getPassword("turkuazz", "roompsw"),
-					new_url: url
-				}
-			).then(async (r)=>{
-				return r.data
-			})
-		}
-		
+		const result = await setVideoToServer(url)
 		if (result.status) {
-			currentVLCStatus.url = url
 			await setVideoVLC(url)
-			
-			if (mainWindow && mainWindow.webContents) {
-				mainWindow.webContents.send('subtitle-status', { 
-					subtitle_exist: false 
-				})
-			}
-			
-			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
-			logger.info("setvideo-vlc historyEntry:", JSON.stringify(historyEntry))
-			if (historyEntry) {
-				logger.info("Sending video-history-update-broadcast to renderer")
-				mainWindow.webContents.send('video-history-update-broadcast', historyEntry)
-			}
-		} else {
-			const historyEntry = result.history_entry || (result.data && result.data.history_entry)
-			logger.info("setvideo-vlc failed historyEntry:", JSON.stringify(historyEntry))
-			if (historyEntry) {
-				logger.info("Sending video-history-update-broadcast to renderer (failed case)")
-				mainWindow.webContents.send('video-history-update-broadcast', historyEntry)
-			}
 		}
-		
 		return result.status
 	} catch (error) {
 		logger.error("Error in setvideo-vlc:", error)
@@ -1200,223 +1183,223 @@ const setPlayingVLC = async (is_playing) => {
 	return false
 }
 
-const startVideoInline = async () => {
-	if (isInlineWatching) {
-		logger.warn("Inline video already playing")
-		return false
-	}
+// const startVideoInline = async () => {
+// 	if (isInlineWatching) {
+// 		logger.warn("Inline video already playing")
+// 		return false
+// 	}
 	
-	if (isVLCwatching) {
-		logger.info("Stopping VLC for inline video")
-		await abortVLC()
+// 	if (isVLCwatching) {
+// 		logger.info("Stopping VLC for inline video")
+// 		await abortVLC()
 		
-		let attempts = 0
-		while (proc_vlc && attempts < 10) {
-			await new Promise(resolve => setTimeout(resolve, 100))
-			attempts++
-		}
-	}
+// 		let attempts = 0
+// 		while (proc_vlc && attempts < 10) {
+// 			await new Promise(resolve => setTimeout(resolve, 100))
+// 			attempts++
+// 		}
+// 	}
 	
-	isInlineWatching = true
-	videoSyncManager.setWatchingState(false, true)
+// 	isInlineWatching = true
+// 	videoSyncManager.setWatchingState(false, true)
 	
-	let connectionAttempts = 0
-	while (connectionAttempts < 3) {
-		if (await connectVideoSyncWS()) {
-			break
-		}
-		connectionAttempts++
-		if (connectionAttempts < 3) {
-			await new Promise(resolve => setTimeout(resolve, 500))
-		}
-	}
+// 	let connectionAttempts = 0
+// 	while (connectionAttempts < 3) {
+// 		if (await connectVideoSyncWS()) {
+// 			break
+// 		}
+// 		connectionAttempts++
+// 		if (connectionAttempts < 3) {
+// 			await new Promise(resolve => setTimeout(resolve, 500))
+// 		}
+// 	}
 		
-	if (connectionAttempts >= 3) {
-		logger.warn("Failed to connect to video sync")
-		isInlineWatching = false
-		return false
-	}
+// 	if (connectionAttempts >= 3) {
+// 		logger.warn("Failed to connect to video sync")
+// 		isInlineWatching = false
+// 		return false
+// 	}
 	
-	const r = await makeRequest_videoSync("get_playerstatus")
-	if (!r.status) {
-		logger.warn("Failed to get player status")
-		isInlineWatching = false
-		return false
-	}
+// 	const r = await makeRequest_videoSync("get_playerstatus")
+// 	if (!r.status) {
+// 		logger.warn("Failed to get player status")
+// 		isInlineWatching = false
+// 		return false
+// 	}
 	
-	lastSetVideoUrl = r.data.url.value
-	mainWindow.webContents.send('inline-video-start', {
-		url: r.data.url.value,
-		time: r.data.time.value,
-		isPlaying: r.data.is_playing.value
-	})
+// 	lastSetVideoUrl = r.data.url.value
+// 	mainWindow.webContents.send('inline-video-start', {
+// 		url: r.data.url.value,
+// 		time: r.data.time.value,
+// 		isPlaying: r.data.is_playing.value
+// 	})
 	
-	sendVideoStatus({
-		status: r.data.is_playing.value ? 'playing' : 'paused',
-		isPlaying: r.data.is_playing.value
-	}, {
-		currentTime: r.data.time.value,
-		isUpToDate: true
-	})
+// 	sendVideoStatus({
+// 		status: r.data.is_playing.value ? 'playing' : 'paused',
+// 		isPlaying: r.data.is_playing.value
+// 	}, {
+// 		currentTime: r.data.time.value,
+// 		isUpToDate: true
+// 	})
 	
-	startInlineMonitoring()
-	return true
-}
+// 	startInlineMonitoring()
+// 	return true
+// }
 
-const setVideoInline = async (url) => {
-	subtitleCache.clear()
-	logger.info("Cleared subtitle cache - new inline video set")
+// const setVideoInline = async (url) => {
+// 	subtitleCache.clear()
+// 	logger.info("Cleared subtitle cache - new inline video set")
 	
-	const result = await makeRequest_videoSync("update_url", {"new_url": url})
-	if (result.status) {
-		const processedUrl = await checkVideoUrl(url)
-		const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
-		mainWindow.webContents.send('inline-video-set', { url: finalUrl })
+// 	const result = await makeRequest_videoSync("update_url", {"new_url": url})
+// 	if (result.status) {
+// 		const processedUrl = await checkVideoUrl(url)
+// 		const finalUrl = Array.isArray(processedUrl) ? processedUrl[0] : processedUrl
+// 		mainWindow.webContents.send('inline-video-set', { url: finalUrl })
 		
-		if (mainWindow && mainWindow.webContents) {
-			mainWindow.webContents.send('subtitle-status', { 
-				subtitle_exist: false 
-			})
-		}
+// 		if (mainWindow && mainWindow.webContents) {
+// 			mainWindow.webContents.send('subtitle-status', { 
+// 				subtitle_exist: false 
+// 			})
+// 		}
 		
-		await makeRequest_videoSync("imuptodate")
-		isClientUpToDate = true
-	}
-	return result.status
-}
+// 		await makeRequest_videoSync("imuptodate")
+// 		isClientUpToDate = true
+// 	}
+// 	return result.status
+// }
 
-const abortInline = async () => {
-	isInlineWatching = false
-	videoSyncManager.setWatchingState(isVLCwatching, false)
+// const abortInline = async () => {
+// 	isInlineWatching = false
+// 	videoSyncManager.setWatchingState(isVLCwatching, false)
 	
-	if (inlineVideoInterval) {
-		clearInterval(inlineVideoInterval)
-		inlineVideoInterval = null
-		logger.info("cleared inline video interval")
-	}
+// 	if (inlineVideoInterval) {
+// 		clearInterval(inlineVideoInterval)
+// 		inlineVideoInterval = null
+// 		logger.info("cleared inline video interval")
+// 	}
 	
-	sendVideoStatus({
-		status: 'stopped',
-		isPlaying: false
-	})
+// 	sendVideoStatus({
+// 		status: 'stopped',
+// 		isPlaying: false
+// 	})
 	
-	if (!isVLCwatching) {
-		disconnectVideoSyncWS()
-	}
+// 	if (!isVLCwatching) {
+// 		disconnectVideoSyncWS()
+// 	}
 	
-	if (mainWindow && mainWindow.webContents) {
-		mainWindow.webContents.send('inline-video-stop')
-	}
-	return true
-}
+// 	if (mainWindow && mainWindow.webContents) {
+// 		mainWindow.webContents.send('inline-video-stop')
+// 	}
+// 	return true
+// }
 
-let inlineCurrentTime = 0
-let inlineIsPlaying = true
-let inlineCurrentVideo = undefined
+// let inlineCurrentTime = 0
+// let inlineIsPlaying = true
+// let inlineCurrentVideo = undefined
 
-const startInlineMonitoring = () => {
-	if (inlineVideoInterval) clearInterval(inlineVideoInterval)
+// const startInlineMonitoring = () => {
+// 	if (inlineVideoInterval) clearInterval(inlineVideoInterval)
 	
-	inlineVideoInterval = setInterval(async () => {
-		if (!isInlineWatching) return
+// 	inlineVideoInterval = setInterval(async () => {
+// 		if (!isInlineWatching) return
 		
-		if (!isClientUpToDate) {
-			try {
-				const statusResult = await makeRequest_videoSync("get_playerstatus")
-				if (statusResult && statusResult.data) {
-					const serverStatus = statusResult.data
+// 		if (!isClientUpToDate) {
+// 			try {
+// 				const statusResult = await makeRequest_videoSync("get_playerstatus")
+// 				if (statusResult && statusResult.data) {
+// 					const serverStatus = statusResult.data
 					
-					if (serverStatus.url && serverStatus.url.value) {
-						mainWindow.webContents.send('inline-video-set', { url: serverStatus.url.value })
-					}
+// 					if (serverStatus.url && serverStatus.url.value) {
+// 						mainWindow.webContents.send('inline-video-set', { url: serverStatus.url.value })
+// 					}
 					
-					if (serverStatus.time && serverStatus.time.value > 0 && Math.abs(inlineCurrentTime - serverStatus.time.value) > TIME_SYNC_TOLERANCE) {
-						mainWindow.webContents.send('inline-video-sync-time', { time: serverStatus.time.value })
-						inlineCurrentTime = serverStatus.time.value
-					}
+// 					if (serverStatus.time && serverStatus.time.value > 0 && Math.abs(inlineCurrentTime - serverStatus.time.value) > TIME_SYNC_TOLERANCE) {
+// 						mainWindow.webContents.send('inline-video-sync-time', { time: serverStatus.time.value })
+// 						inlineCurrentTime = serverStatus.time.value
+// 					}
 					
-					if (serverStatus.is_playing) {
-						mainWindow.webContents.send('inline-video-sync-playing', { isPlaying: serverStatus.is_playing.value })
-						inlineIsPlaying = serverStatus.is_playing.value
-					}
+// 					if (serverStatus.is_playing) {
+// 						mainWindow.webContents.send('inline-video-sync-playing', { isPlaying: serverStatus.is_playing.value })
+// 						inlineIsPlaying = serverStatus.is_playing.value
+// 					}
 					
-					await makeRequest_videoSync("imuptodate")
-					isClientUpToDate = true
-					logger.info("Inline video synced with server")
-				}
-			} catch (error) {
-				logger.warn("Failed to sync inline video with server:", error.message)
-			}
-		}
+// 					await makeRequest_videoSync("imuptodate")
+// 					isClientUpToDate = true
+// 					logger.info("Inline video synced with server")
+// 				}
+// 			} catch (error) {
+// 				logger.warn("Failed to sync inline video with server:", error.message)
+// 			}
+// 		}
 		
-		try {
-			mainWindow.webContents.send('inline-video-get-status-sync')
-		} catch (error) {
-			logger.error("Inline video monitoring error:", error.message)
-		}
-	}, 500)
-}
+// 		try {
+// 			mainWindow.webContents.send('inline-video-get-status-sync')
+// 		} catch (error) {
+// 			logger.error("Inline video monitoring error:", error.message)
+// 		}
+// 	}, 500)
+// }
 
-ipcMain.handle('inline-video-status-response-sync', async (event, data) => {
-	if (!isInlineWatching) return
+// ipcMain.handle('inline-video-status-response-sync', async (event, data) => {
+// 	if (!isInlineWatching) return
 	
-	const { currentTime, isPlaying, currentVideo } = data
+// 	const { currentTime, isPlaying, currentVideo } = data
 	
-	let hasStateChanged = false
-	let hasTimeChanged = false
-	let hasVideoChanged = false
+// 	let hasStateChanged = false
+// 	let hasTimeChanged = false
+// 	let hasVideoChanged = false
 	
-	if (inlineIsPlaying !== isPlaying) {
-		hasStateChanged = true
-		inlineIsPlaying = isPlaying
-	}
+// 	if (inlineIsPlaying !== isPlaying) {
+// 		hasStateChanged = true
+// 		inlineIsPlaying = isPlaying
+// 	}
 	
-	if (Math.abs(inlineCurrentTime - currentTime) > 1.5) {
-		hasTimeChanged = true
-		inlineCurrentTime = currentTime
-	}
+// 	if (Math.abs(inlineCurrentTime - currentTime) > 1.5) {
+// 		hasTimeChanged = true
+// 		inlineCurrentTime = currentTime
+// 	}
 	
-	if (inlineCurrentVideo !== currentVideo && currentVideo) {
-		hasVideoChanged = true
-		inlineCurrentVideo = currentVideo
-	}
+// 	if (inlineCurrentVideo !== currentVideo && currentVideo) {
+// 		hasVideoChanged = true
+// 		inlineCurrentVideo = currentVideo
+// 	}
 	
-	sendVideoStatus({
-		status: inlineIsPlaying ? 'playing' : 'paused',
-		isPlaying: inlineIsPlaying
-	}, {
-		currentTime: currentTime,
-		isUpToDate: isClientUpToDate
-	})
+// 	sendVideoStatus({
+// 		status: inlineIsPlaying ? 'playing' : 'paused',
+// 		isPlaying: inlineIsPlaying
+// 	}, {
+// 		currentTime: currentTime,
+// 		isUpToDate: isClientUpToDate
+// 	})
 	
-	try {
-		if (hasVideoChanged) {
-			logger.debug("Inline video URL change detected")
-			const result = await makeRequest_videoSync("update_url", {"new_url": currentVideo})
-			if (result.status) {
-				isClientUpToDate = true
-			}
-		}
+// 	try {
+// 		if (hasVideoChanged) {
+// 			logger.debug("Inline video URL change detected")
+// 			const result = await makeRequest_videoSync("update_url", {"new_url": currentVideo})
+// 			if (result.status) {
+// 				isClientUpToDate = true
+// 			}
+// 		}
 		
-		if (hasStateChanged) {
-			logger.debug("Inline video state change detected")
-			const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isPlaying, "new_time": currentTime})
-			if (result.status) {
-				isClientUpToDate = true
-			}
-		}
+// 		if (hasStateChanged) {
+// 			logger.debug("Inline video state change detected")
+// 			const result = await makeRequest_videoSync("update_isplaying", {"is_playing": isPlaying, "new_time": currentTime})
+// 			if (result.status) {
+// 				isClientUpToDate = true
+// 			}
+// 		}
 		
-		if (hasTimeChanged) {
-			logger.debug("Inline video time change detected")
-			const result = await makeRequest_videoSync("update_time", {"new_time": currentTime})
-			if (result.status) {
-				isClientUpToDate = true
-			}
-		}
-	} catch (error) {
-		logger.debug("Failed to sync inline video status:", error.message)
-	}
-})
+// 		if (hasTimeChanged) {
+// 			logger.debug("Inline video time change detected")
+// 			const result = await makeRequest_videoSync("update_time", {"new_time": currentTime})
+// 			if (result.status) {
+// 				isClientUpToDate = true
+// 			}
+// 		}
+// 	} catch (error) {
+// 		logger.debug("Failed to sync inline video status:", error.message)
+// 	}
+// })
 
 const openVLC = async () => {
 	return await new Promise(async (resolve, reject) => {
@@ -1437,16 +1420,16 @@ const openVLC = async () => {
 		modeTransitionLock = true
 		
 		try {
-			if (isInlineWatching) {
-				logger.info("Stopping inline video for VLC")
-				await abortInline()
+			// if (isInlineWatching) {
+			// 	logger.info("Stopping inline video for VLC")
+			// 	await abortInline()
 				
-				let attempts = 0
-				while (isInlineWatching && attempts < 10) {
-					await new Promise(resolve => setTimeout(resolve, 100))
-					attempts++
-				}
-			}
+			// 	let attempts = 0
+			// 	while (isInlineWatching && attempts < 10) {
+			// 		await new Promise(resolve => setTimeout(resolve, 100))
+			// 		attempts++
+			// 	}
+			// }
 
 			isVLCwatching = true
 			videoSyncManager.setWatchingState(true, false)
@@ -1770,10 +1753,10 @@ const startVLCMonitoring = async () => {
 				await setTimeVLC(0)
 				currentTime = 0
 				lastSentTime = 0
-				const result = await makeRequest_videoSync("update_url", {"new_url": videoVLC})
-				if (result.status && result.data.status) {
+				const result = await setVideoToServer(videoVLC)
+				if (result.status) {
 					currentVideo = videoVLC
-				} else {
+				} else if (!result.skipped) {
 					logger.debug("video change error:", result)
 					isClientUpToDate = false
 					return
@@ -1821,7 +1804,7 @@ const startVLCMonitoring = async () => {
 				if (result.status && result.data.status) {
 					lastSentTime = timeVLC
 				} else {
-					logger.debug("regular change error:", result)
+					logger.debug("regular update_time error:", result)
 					isClientUpToDate = false
 					return
 				}
@@ -1849,24 +1832,24 @@ ipcMain.handle('open-vlc', async (event) => {
 	return await openVLC()
 })
 
-ipcMain.handle('start-inline-video', async (event) => {
-	return await startVideoInline()
-})
+// ipcMain.handle('start-inline-video', async (event) => {
+// 	return await startVideoInline()
+// })
 
-ipcMain.handle('set-inline-video', async (event, url) => {
-	try {
-		url = url.trim()
-		logger.info("update_url inline", url)
-		return await setVideoInline(url)
-	} catch (error) {
-		logger.error("Error in set-inline-video:", error)
-		return false
-	}
-})
+// ipcMain.handle('set-inline-video', async (event, url) => {
+// 	try {
+// 		url = url.trim()
+// 		logger.info("update_url inline", url)
+// 		return await setVideoInline(url)
+// 	} catch (error) {
+// 		logger.error("Error in set-inline-video:", error)
+// 		return false
+// 	}
+// })
 
-ipcMain.handle('stop-inline-video', async (event) => {
-	return await abortInline()
-})
+// ipcMain.handle('stop-inline-video', async (event) => {
+// 	return await abortInline()
+// })
 
 ipcMain.handle('stop-vlc', async (event) => {
 	return await abortVLC()

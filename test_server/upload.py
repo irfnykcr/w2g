@@ -98,6 +98,7 @@ def chunked_upload(file_path, version, os_type, notes="Update"):
     
     result = response.json()
     print(f"Completed: {result['version']} - {result['file']}")
+    print(f"Download URL: https://w2g.turkuazz.vip/updates/downloads/{result['file']}")
     return True
 
 if __name__ == "__main__":

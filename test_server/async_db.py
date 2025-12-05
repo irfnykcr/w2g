@@ -4,6 +4,7 @@ import logging
 from os import getenv
 from dotenv import load_dotenv
 from bcrypt import checkpw
+from datetime import datetime
 
 load_dotenv()
 
@@ -21,7 +22,7 @@ async def init_pool():
 			db=getenv("MYSQL_DATABASE"),
 			minsize=2,
 			maxsize=10,
-			autocommit=False
+			autocommit=True
 		)
 	return pool
 
@@ -117,8 +118,6 @@ async def add_to_history(roomid: str, user: str, url: str, success: bool):
 					"INSERT INTO room_history (roomid, user, link, success) VALUES (%s, %s, %s, %s)",
 					(roomid, user, url, 1 if success else 0)
 				)
-				await conn.commit()
-				from datetime import datetime
 				return {
 					"id": cursor.lastrowid,
 					"user": user,
@@ -136,7 +135,7 @@ async def get_video_history(roomid: str, limit: int = 15):
 		async with p.acquire() as conn:
 			async with conn.cursor() as cursor:
 				await cursor.execute(
-					"SELECT id, user, link, success, created_at FROM room_history WHERE roomid = %s ORDER BY id DESC LIMIT %s",
+					"SELECT id, user, link, success, created_at FROM room_history WHERE roomid = %s ORDER BY created_at DESC LIMIT %s",
 					(roomid, limit)
 				)
 				results = await cursor.fetchall()
@@ -164,7 +163,6 @@ async def insert_message(roomid: str, user: str, message: str, message_type: str
 					"INSERT INTO messages (roomid, user, message, message_type, reply_to) VALUES (%s, %s, %s, %s, %s)",
 					(roomid, user, message, message_type, reply_to)
 				)
-				await conn.commit()
 				return cursor.lastrowid
 	except Exception as e:
 		logger.error(f"insert_message error: {e}")
@@ -205,7 +203,6 @@ async def mark_message_removed(message_id: int):
 			async with conn.cursor() as cursor:
 				await cursor.execute("UPDATE messages SET removed = 1 WHERE id = %s", (message_id,))
 				await cursor.execute("UPDATE messages SET removed = 1 WHERE reply_to = %s AND message_type = 'new_reaction'", (message_id,))
-				await conn.commit()
 				return True
 	except Exception as e:
 		logger.error(f"mark_message_removed error: {e}")
@@ -234,7 +231,6 @@ async def update_reaction(reaction_id: int, emoji = None, removed = None):
 					await cursor.execute("UPDATE messages SET message = %s, removed = %s WHERE id = %s", (emoji, removed, reaction_id))
 				elif removed is not None:
 					await cursor.execute("UPDATE messages SET removed = %s WHERE id = %s", (removed, reaction_id))
-				await conn.commit()
 				return True
 	except Exception as e:
 		logger.error(f"update_reaction error: {e}")
@@ -328,7 +324,6 @@ async def save_room_state(roomid: str, url: str, time_val: int, is_playing: bool
 					VALUES (%s, %s, %s, %s, %s)
 					ON DUPLICATE KEY UPDATE url=%s, time=%s, is_playing=%s, subtitle_exist=%s
 				""", (roomid, url, time_val, is_playing, subtitle_exist, url, time_val, is_playing, subtitle_exist))
-				await conn.commit()
 	except Exception as e:
 		logger.error(f"save_room_state error: {e}")
 

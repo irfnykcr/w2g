@@ -1,3 +1,4 @@
+import logging
 from traceback import print_exc
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,10 +8,10 @@ from signal import signal, SIGTERM, SIGINT
 import sys
 import re
 from base64 import b64decode, b64encode
-import logging
-from datetime import datetime
 from videoSyncBinary import BinaryProtocol, RoomManager
 import async_db
+from collections import defaultdict
+import time as time_module
 
 load_dotenv()
 
@@ -42,9 +43,6 @@ app.add_middleware(
 	allow_headers=["Content-Type", "Authorization"],
 )
 
-from collections import defaultdict
-import time as time_module
-
 class RateLimiter:
 	def __init__(self, max_requests: int = 30, window_seconds: int = 60):
 		self.max_requests = max_requests
@@ -65,7 +63,7 @@ class RateLimiter:
 		for k in keys_to_delete:
 			del self.requests[k]
 
-rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
+rate_limiter = RateLimiter(max_requests=60, window_seconds=60)
 ws_rate_limiter = RateLimiter(max_requests=100, window_seconds=10)
 
 HOME = getenv("DIR_SERVER")
@@ -301,34 +299,6 @@ class VideoSyncHandler:
 				ack = BinaryProtocol.encode_ack(False, request_id, "not authorized")
 				await websocket.send_bytes(ack)
 
-		elif msg_type == 'url':
-			new_url = msg['url']
-			url_valid = check_url(new_url)
-			await async_db.add_to_history(roomid, user, new_url, url_valid)
-			
-			if not url_valid:
-				ack = BinaryProtocol.encode_ack(False, request_id, "invalid url")
-				await websocket.send_bytes(ack)
-				return
-			
-			if room.can_update(user, 'url'):
-				room.state.url = new_url
-				room.state.time = 0
-				room.state.is_playing = True
-				room.state.subtitle_exist = False
-				room.state.url_user = user
-				room.mark_all_not_uptodate(user)
-				delete_subtitle(roomid)
-				
-				broadcast_data = BinaryProtocol.encode_url(new_url, 0)
-				await self.broadcast(room, broadcast_data, exclude_user=user)
-				
-				ack = BinaryProtocol.encode_ack(True, request_id)
-				await websocket.send_bytes(ack)
-			else:
-				ack = BinaryProtocol.encode_ack(False, request_id, "not authorized")
-				await websocket.send_bytes(ack)
-
 
 video_sync = VideoSyncHandler()
 
@@ -487,7 +457,7 @@ async def setvideourl_offline(request: Request):
 	delete_subtitle(roomid)
 	
 	broadcast_data = BinaryProtocol.encode_url(new_url, 0)
-	await video_sync.broadcast(room, broadcast_data)
+	await video_sync.broadcast(room, broadcast_data, exclude_user=user)
 	
 	return {"status": True, "history_entry": history_entry}
 

@@ -35,7 +35,7 @@
 	<!-- main content -->
 	<main class="flex flex-1 p-3 sm:p-6 overflow-hidden gap-3 sm:gap-6 flex-col sm:flex-row min-h-0" style="display: flex;">
 		<!-- left panel container -->
-		<div id="left-panel" class="flex flex-col gap-3 sm:gap-6 min-h-0 overflow-hidden select-none" style="flex: 1; display: flex;">
+		<div id="left-panel" class="flex flex-col gap-3 sm:gap-6 sm:min-w-[400px] min-w-[205px] min-h-[250px] overflow-hidden select-none" style="flex: 1; display: flex;">
 			<!-- video input url section -->
 			<section id="url-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden" style="flex: 1; display: flex;">
 				<button id="toggle-url-section" class="absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
@@ -138,13 +138,13 @@
 		</div>
 
 		<!-- vertical resizer -->
-		<div id="vertical-resizer" class="resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200" style="width: 6px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
+		<div id="vertical-resizer" class="min-w-[5px] resizer-vertical bg-gray-600 hover:bg-turkuazz cursor-col-resize transition-colors duration-200" style="width: 6px; background: linear-gradient(180deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- horizontal resizer for mobile (above chat) -->
-		<div id="mobile-horizontal-resizer" class="resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 sm:hidden" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
+		<div id="mobile-horizontal-resizer" class="min-h-[5px] resizer-horizontal bg-gray-600 hover:bg-turkuazz cursor-row-resize transition-colors duration-200 sm:hidden" style="height: 6px; background: linear-gradient(90deg, transparent, #04aa6d, transparent);"></div>
 
 		<!-- chat section -->
-		<section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden flex-1 min-h-0" style="flex: 1; display: flex;">
+		<section id="chat-section" class="bg-dark-card rounded-lg shadow-lg relative flex flex-col overflow-hidden flex-1 sm:min-w-[350px] min-w-[350px] min-h-[200px]" style="flex: 1; display: flex;">
 			<button id="toggle-chat-section" class="select-none absolute top-3 right-3 sm:top-4 sm:right-4 text-gray-400 hover:text-turkuazz hover:bg-dark-hover rounded-full w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-xl font-bold z-10 transition-all duration-200">
 				&times;
 			</button>
@@ -197,15 +197,15 @@
 					id="input-chatmessage"
 					type="text"
 					placeholder="Type your message..."
-					class="flex-1 p-3 rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
+					class="flex-1 p-3 min-w-[165px] rounded-md bg-dark-bg border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-turkuazz text-sm sm:text-base transition-all duration-200"
 				/>
-				<button id="send-chatmessage" class="bg-turkuazz text-dark-bg font-bold py-3 px-4 sm:px-6 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
+				<button id="send-chatmessage" class="bg-turkuazz text-dark-bg font-bold py-2 px-2 sm:px-4 rounded-md hover:bg-opacity-90 transition-colors whitespace-nowrap text-sm sm:text-base">
 					send
 				</button>
 			</div>
 			
 			<!-- gif picker -->
-			<div id="gif-picker-modal" class="hidden fixed z-50">
+			<div id="gif-picker-modal" class="hidden fixed z-50 ">
 				<div class="bg-dark-card rounded-lg shadow-2xl border border-gray-600 flex flex-col">
 					<!-- tabs -->
 					<div class="flex items-center justify-between p-4 border-b border-gray-700">
