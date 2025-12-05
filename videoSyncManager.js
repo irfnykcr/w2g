@@ -117,15 +117,15 @@ class VideoSyncManager {
             return false
         }
 
-        const userPsw = await this.secureStorage.getPassword('turkuazz', 'userpsw')
-        const roomPsw = await this.secureStorage.getPassword('turkuazz', 'roompsw')
+        const token = await this.secureStorage.getPassword('turkuazz', 'room_token')
+        if (!token) {
+            this.logger.warn('Cannot connect: no room token')
+            return false
+        }
 
         return await this.client.connect(
             this.serverEndpoint,
-            this.userId,
-            userPsw,
-            this.roomId,
-            roomPsw
+            token
         )
     }
 
@@ -175,16 +175,15 @@ class VideoSyncManager {
         }
 
         try {
-            const userPsw = await this.secureStorage.getPassword('turkuazz', 'userpsw')
-            const roomPsw = await this.secureStorage.getPassword('turkuazz', 'roompsw')
+            const token = await this.secureStorage.getPassword('turkuazz', 'room_token')
+            if (!token) {
+                return { status: false, error: 'No token' }
+            }
 
             const response = await axios.post(
                 `https://${this.serverEndpoint}/subtitle/upload`,
                 {
-                    user: this.userId,
-                    psw: userPsw,
-                    room: this.roomId,
-                    roompsw: roomPsw,
+                    token: token,
                     subtitle_data: base64Data,
                     filename: filename
                 },
@@ -203,13 +202,15 @@ class VideoSyncManager {
         }
 
         try {
-            const roomPsw = await this.secureStorage.getPassword('turkuazz', 'roompsw')
+            const token = await this.secureStorage.getPassword('turkuazz', 'room_token')
+            if (!token) {
+                return { status: false, error: 'No token' }
+            }
 
             const response = await axios.post(
                 `https://${this.serverEndpoint}/subtitle/download`,
                 {
-                    room: this.roomId,
-                    roompsw: roomPsw
+                    token: token
                 },
                 { timeout: 10000 }
             )

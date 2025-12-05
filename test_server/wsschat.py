@@ -9,6 +9,7 @@ from json import JSONDecodeError
 from time import time
 from dotenv import load_dotenv
 import async_db
+import jwt_auth
 load_dotenv()
 
 logging.basicConfig(
@@ -626,29 +627,35 @@ chat = ChatApp()
 @app.websocket("/")
 async def websocket_endpoint(
 	websocket: WebSocket,
-	user: str = Query(...),
-	psw: str = Query(...),
-	roomid: str = Query(...),
-	roompsw: str = Query(...),
+	token: str = Query(...),
 	lastMessageDate: float = Query(0),
 ):
 
 	await websocket.accept()
 
-	if not (user and psw and roomid and roompsw):
-		logger.error("Missing required parameters")
-		await websocket.close(code=1008, reason="Missing required parameters")
+	if not token:
+		logger.error("Missing token")
+		await websocket.close(code=1008, reason="Missing token")
 		return
 
-	if not await async_db.check_user(user, psw):
-		logger.error("Invalid user credentials")
-		await websocket.close(code=1008, reason="Invalid user credentials")
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		logger.error("Invalid token")
+		await websocket.close(code=1008, reason="Invalid token")
+		return
+	
+	user = payload.get("sub", "")
+	roomid = payload.get("roomid", "")
+	
+	if not (user and roomid):
+		logger.error("Token missing user or room")
+		await websocket.close(code=1008, reason="Invalid token data")
 		return
 
-	room_name = await async_db.check_room_get_name(roomid, roompsw)
+	room_name = await async_db.get_room_name(roomid)
 	if not room_name:
-		logger.error("Invalid room credentials")
-		await websocket.close(code=1008, reason="Invalid room credentials")
+		logger.error("Room not found")
+		await websocket.close(code=1008, reason="Room not found")
 		return
 	
 	logger.info(f"accepted connection: user`{user}` roomid`{roomid}`")

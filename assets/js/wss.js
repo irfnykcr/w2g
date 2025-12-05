@@ -908,21 +908,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
 	const SERVER_ENDPOINT = await window.electronAPI.getServerEndpoint()
-	let USER_PSW
 	await window.electronAPI.getUser().then((r)=>{
 		USER = r.user
-		USER_PSW = r.psw
 	})
 	let ROOM_ID
-	let ROOM_PSW 
+	let ROOM_TOKEN 
 	await window.electronAPI.getRoom().then(async (r)=>{
 		if (r === false){
 			loggerWss.info("asking for room creds")
 			window.electronAPI.gotoRoomJoin()
 		} else {
 			ROOM_ID = r.room
-			ROOM_PSW = r.psw
-			// loggerWss.debug("already have creds",r, ROOM_ID, ROOM_PSW)
+			ROOM_TOKEN = r.token
 			loggerWss.debug("already have creds")
 		}
 		if (ROOM_ID === null || ROOM_ID === undefined){
@@ -975,10 +972,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 				}
 				
 				const queryParams = new URLSearchParams({
-					user: USER,
-					psw: USER_PSW,
-					roomid: ROOM_ID,
-					roompsw: ROOM_PSW,
+					token: ROOM_TOKEN,
 					lastMessageDate: lastMessageDate
 				}).toString()
 				
@@ -1243,8 +1237,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 			}
 		}
 		
-			socket.onclose = (ev) => {
-			const closeDetails = `code:${ev.code} reason:${ev.reason || 'none'} clean:${ev.wasClean} readyState:${socket.readyState} online:${navigator.onLine}`
+		socket.onerror = (error) => {
+			loggerWss.error("WebSocket error:", error)
+
+			if (heartbeatInterval) { 
+				clearInterval(heartbeatInterval)
+				heartbeatInterval = null 
+			}
+			if (connectionTimeout) {
+				clearTimeout(connectionTimeout)
+				connectionTimeout = null
+			}
+			if (wss && wss === socket) {
+				wss = null
+			}
+			
+			isConnecting = false
+		}
+
+		socket.onclose = async (ev) => {
+			const closeDetails = `code:${ev.code} reason:${ev.reason || 'none'} clean:${ev.wasClean} readyState:${socket ? socket.readyState : 'null'} online:${navigator.onLine}`
 			loggerWss.info("WebSocket connection closed", closeDetails)
 			
 			if (heartbeatInterval) { 
@@ -1263,6 +1275,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 			
 			isConnecting = false
 			
+			if (ev.code === 1008 && ev.reason && ev.reason.includes("Invalid token")) {
+				loggerWss.info("Token expired, attempting refresh...")
+				const refreshed = await window.electronAPI.refreshRoomToken()
+				if (refreshed) {
+					ROOM_TOKEN = (await window.electronAPI.getRoom()).token
+					loggerWss.info("Token refreshed, reconnecting...")
+					reconnectAttempts = 0
+					reconnectTimeout = setTimeout(() => connectWebSocket(0), 1000)
+					return
+				} else {
+					loggerWss.error("Token refresh failed, redirecting to room join")
+					window.electronAPI.gotoRoomJoin()
+					return
+				}
+			}
+			
 			const shouldReconnect = ev.code !== 1000 && 
 				ev.reason !== "New connection established" &&
 				wasCurrentSocket
@@ -1274,35 +1302,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 			} else {
 				loggerWss.debug(`Not reconnecting: code=${ev.code} reason=${ev.reason} wasCurrentSocket=${wasCurrentSocket}`)
 			}
-		}
-
-		socket.onerror = (error) => {
-			loggerWss.error("WebSocket error:", error)
-
-			if (heartbeatInterval) { 
-				clearInterval(heartbeatInterval)
-				heartbeatInterval = null 
-			}
-			if (connectionTimeout) {
-				clearTimeout(connectionTimeout)
-				connectionTimeout = null
-			}
-			if (wss){
-				if (wss === socket) {
-					if (wss.close){
-						wss.close()
-					}
-					wss = null
-				}
-			}
-			if (socket){
-				if (socket.close){
-					socket.close()
-				}
-				socket = null
-			}
-			
-			isConnecting = false
 		}
 
 		wss = socket

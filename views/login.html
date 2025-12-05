@@ -72,12 +72,11 @@
 				}
 				console.log("there is user.", r)
 				USER = r.user
-				USER_PSW = r.psw
 			})
-			console.log(USER,USER_PSW)
-			if (USER && USER_PSW) {
-				console.log("trying:", USER, USER_PSW)
-				await checkLogin(USER, USER_PSW)
+			console.log(USER)
+			if (USER) {
+				console.log("already logged in, redirecting to room join")
+				await window.electronAPI.gotoRoomJoin()
 			}
 		})()
 

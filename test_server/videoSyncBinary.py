@@ -186,45 +186,18 @@ class BinaryProtocol:
                 return {'type': 'uptodate', 'request_id': request_id}
             
             elif opcode == OP.AUTH:
-                # AUTH: 1B op, 1B userLen, nB user, 1B pswLen, nB psw, 1B roomLen, nB room, 1B roomPswLen, nB roomPsw
                 offset = 1
-                if len(data) < offset + 1:
+                if len(data) < offset + 2:
                     return None
-                user_len = data[offset]; offset += 1
-                if user_len > MAX_CRED_LENGTH or len(data) < offset + user_len:
-                    return None
-                try:
-                    user = data[offset:offset+user_len].decode('utf-8', errors='strict'); offset += user_len
-                except UnicodeDecodeError:
-                    return None
-                if len(data) < offset + 1:
-                    return None
-                psw_len = data[offset]; offset += 1
-                if psw_len > MAX_CRED_LENGTH or len(data) < offset + psw_len:
+                token_len = struct.unpack('>H', data[offset:offset+2])[0]
+                offset += 2
+                if token_len > 2048 or len(data) < offset + token_len:
                     return None
                 try:
-                    psw = data[offset:offset+psw_len].decode('utf-8', errors='strict'); offset += psw_len
+                    token = data[offset:offset+token_len].decode('utf-8', errors='strict')
                 except UnicodeDecodeError:
                     return None
-                if len(data) < offset + 1:
-                    return None
-                room_len = data[offset]; offset += 1
-                if room_len > MAX_CRED_LENGTH or len(data) < offset + room_len:
-                    return None
-                try:
-                    roomid = data[offset:offset+room_len].decode('utf-8', errors='strict'); offset += room_len
-                except UnicodeDecodeError:
-                    return None
-                if len(data) < offset + 1:
-                    return None
-                roompsw_len = data[offset]; offset += 1
-                if roompsw_len > MAX_CRED_LENGTH or len(data) < offset + roompsw_len:
-                    return None
-                try:
-                    roompsw = data[offset:offset+roompsw_len].decode('utf-8', errors='strict')
-                except UnicodeDecodeError:
-                    return None
-                return {'type': 'auth', 'user': user, 'psw': psw, 'roomid': roomid, 'roompsw': roompsw}
+                return {'type': 'auth', 'token': token}
             
             else:
                 return None

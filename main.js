@@ -278,20 +278,57 @@ const isValidVideoUrl = (url) => {
 
 let ROOMID
 let USERID
+let ACCESS_TOKEN = null
 
-const checkRoom = async (room, roompsw)=>{
+const refreshRoomToken = async () => {
+	const refresh_token = await secureStorage.getPassword("turkuazz", "refresh_token")
+	if (!refresh_token || !ROOMID) {
+		return false
+	}
+	try {
+		const r = await axios.post(
+			`https://${SERVER_ENDPOINT}/refresh_token`,
+			{ refresh_token: refresh_token, roomid: ROOMID }
+		)
+		if (r.data.status && r.data.access_token) {
+			ACCESS_TOKEN = r.data.access_token
+			await secureStorage.setPassword("turkuazz", "room_token", r.data.access_token)
+			logger.info("Room token refreshed successfully")
+			return true
+		}
+	} catch (e) {
+		logger.error("Failed to refresh room token:", e.message)
+	}
+	return false
+}
+
+const checkRoom = async (room, roompsw) => {
+	const userToken = await secureStorage.getPassword("turkuazz", "access_token")
+	if (!userToken) {
+		return false
+	}
 	return await axios.post(
 		`https://${SERVER_ENDPOINT}/login_room`,
 		{
 			room: room,
-			psw: roompsw
+			psw: roompsw,
+			token: userToken
 		}
-	).then(async (r)=>{
-		return r.data.status
-	})
+	).then(async (r) => {
+		if (r.data.status && r.data.access_token) {
+			ACCESS_TOKEN = r.data.access_token
+			await secureStorage.setPassword("turkuazz", "room_token", r.data.access_token)
+			return true
+		}
+		return false
+	}).catch(() => false)
 }
 ipcMain.handle('check-room', async (event, room, roompsw) => {
 	return checkRoom(room, roompsw)
+})
+
+ipcMain.handle('refresh-room-token', async (event) => {
+	return refreshRoomToken()
 })
 
 ipcMain.handle('get-room', async (event) => {
@@ -304,40 +341,46 @@ ipcMain.handle('get-room', async (event) => {
 		}
 	}
 	try{
-		_roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
-		if (_roompsw === null) {return false}
+		const token = await secureStorage.getPassword("turkuazz", "room_token")
+		if (token === null) {return false}
+		ACCESS_TOKEN = token
 	} catch {
 		return false
 	}
 	return {
 		room: ROOMID,
-		psw: _roompsw
+		token: ACCESS_TOKEN
 	}
 })
 ipcMain.handle('set-roomcreds', async (event, roomid, roompsw) => {
 	if (!await checkRoom(roomid, roompsw)) { return false }
 	ROOMID = roomid
 	await secureStorage.setPassword('turkuazz', "roomid", roomid)
-	await secureStorage.setPassword('turkuazz', "roompsw", roompsw)
 	return true
 })
 ipcMain.handle('left-room', async (event) => {
 	await abortVLC()
 	await secureStorage.deletePassword('turkuazz', "roomid")
-	await secureStorage.deletePassword('turkuazz', "roompsw")
+	await secureStorage.deletePassword('turkuazz', "room_token")
+	ACCESS_TOKEN = null
 	return true
 })
 
-const checkUser = async (user, userpsw)=>{
+const checkUser = async (user, userpsw) => {
 	return await axios.post(
 		`https://${SERVER_ENDPOINT}/login_user`,
 		{
 			user: user,
 			psw: userpsw
 		}
-	).then(async (r)=>{
-		return r.data.status
-	})
+	).then(async (r) => {
+		if (r.data.status && r.data.access_token && r.data.refresh_token) {
+			await secureStorage.setPassword("turkuazz", "access_token", r.data.access_token)
+			await secureStorage.setPassword("turkuazz", "refresh_token", r.data.refresh_token)
+			return true
+		}
+		return false
+	}).catch(() => false)
 }
 ipcMain.handle('check-user', async (event, user, userpsw) => {
 	return checkUser(user, userpsw)
@@ -353,32 +396,32 @@ ipcMain.handle('get-user', async (event) => {
 		}
 	}
 	try{
-		_userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
-		if (_userpsw === null) {return false}
+		const token = await secureStorage.getPassword("turkuazz", "access_token")
+		if (token === null) {return false}
 	} catch {
 		return false
 	}
 	logger.info("user:", USERID)
 	return {
-		user: USERID,
-		psw: _userpsw
+		user: USERID
 	}
 })
 ipcMain.handle('set-usercreds', async (event, user, userpsw) => {
 	if (!await checkUser(user, userpsw)) { return false }
 	USERID = user
 	await secureStorage.setPassword("turkuazz", "user", user)
-	await secureStorage.setPassword("turkuazz", "userpsw", userpsw)
 	return true
 })
 ipcMain.handle('logout-user', async (event) => {
 	await abortVLC()
 	USERID = null
 	ROOMID = null
+	ACCESS_TOKEN = null
 	await secureStorage.deletePassword('turkuazz', "roomid")
-	await secureStorage.deletePassword('turkuazz', "roompsw")
+	await secureStorage.deletePassword('turkuazz', "room_token")
 	await secureStorage.deletePassword('turkuazz', "user")
-	await secureStorage.deletePassword('turkuazz', "userpsw")
+	await secureStorage.deletePassword('turkuazz', "access_token")
+	await secureStorage.deletePassword('turkuazz', "refresh_token")
 	return true
 })
 
@@ -657,15 +700,16 @@ ipcMain.on('goto-update', () => {
 	mainWindow.loadFile('views/update.html')
 })
 
-const makeRequest_server = async (url, json) => {
+const makeRequest_server = async (url, json, retryCount = 0) => {
 	if (!json) json = {}
 	if (!USERID || !ROOMID) {
 		return {status: false, message: "Not authenticated"}
 	}
-	json.userid = USERID
-	json.userpsw = await secureStorage.getPassword("turkuazz", "userpsw")
-	json.roomid = ROOMID
-	json.roompsw = await secureStorage.getPassword("turkuazz", "roompsw")
+	const token = await secureStorage.getPassword("turkuazz", "room_token")
+	if (!token) {
+		return {status: false, message: "No token"}
+	}
+	json.token = token
 	try{
 		const r = await axios.post(
 			`https://${SERVER_ENDPOINT}${url}`,
@@ -674,6 +718,13 @@ const makeRequest_server = async (url, json) => {
 		)
 		return r.data
 	} catch (e){
+		if (e.response?.status === 401 && e.response?.data?.error === "Invalid token" && retryCount === 0) {
+			logger.info("Token expired, refreshing...")
+			const refreshed = await refreshRoomToken()
+			if (refreshed) {
+				return makeRequest_server(url, json, retryCount + 1)
+			}
+		}
 		logger.error(`makeRequest_server error!\nargs:, ${url},${json}\nerror:${e.message}`)
 		return {status: false, error: e.message}
 	}
@@ -968,8 +1019,8 @@ const setVideoToServer = async (url) => {
 		return { status: false, error: "Already setting video" }
 	}
 	
-	if (!isValidVideoUrl(url)) {
-		logger.warn("Invalid video URL rejected:", url.substring(0, 100))
+	if (!url || !isValidVideoUrl(url)) {
+		logger.warn("Invalid video URL rejected:", url ? url.substring(0, 100) : "null")
 		return { status: false, error: "Invalid URL" }
 	}
 	
@@ -983,13 +1034,11 @@ const setVideoToServer = async (url) => {
 		logger.info("setVideoToServer:", url)
 		subtitleCache.clear()
 		
+		const token = await secureStorage.getPassword("turkuazz", "room_token")
 		const result = await axios.post(
 			`https://${SERVER_ENDPOINT}/setvideourl_offline`,
 			{
-				user: USERID,
-				psw: await secureStorage.getPassword("turkuazz", "userpsw"),
-				room: ROOMID,
-				roompsw: await secureStorage.getPassword("turkuazz", "roompsw"),
+				token: token,
 				new_url: url
 			}
 		).then(r => r.data)

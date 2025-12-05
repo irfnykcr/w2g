@@ -72,12 +72,11 @@
 				}
 				console.log("there is room.", r)
 				ROOM_ID = r.room
-				ROOM_PSW = r.psw
 			})
-			console.log(ROOM_ID,ROOM_PSW)
-			if (ROOM_ID && ROOM_PSW) {
-				console.log("trying:", ROOM_ID, ROOM_PSW)
-				await checkRoom(ROOM_ID, ROOM_PSW)
+			console.log(ROOM_ID)
+			if (ROOM_ID) {
+				console.log("already have room, redirecting to index")
+				await window.electronAPI.gotoIndex()
 			}
 		})()
 

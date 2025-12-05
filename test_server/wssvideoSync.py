@@ -10,6 +10,7 @@ import re
 from base64 import b64decode, b64encode
 from videoSyncBinary import BinaryProtocol, RoomManager
 import async_db
+import jwt_auth
 from collections import defaultdict
 import time as time_module
 
@@ -323,23 +324,31 @@ async def websocket_endpoint(websocket: WebSocket):
 		await websocket.close(code=1008, reason="Auth required")
 		return
 	
-	user = msg.get('user', '')
-	psw = msg.get('psw', '')
-	roomid = msg.get('roomid', '')
-	roompsw = msg.get('roompsw', '')
-
-	if not (user and psw and roomid and roompsw):
-		logger.error("Missing auth parameters")
-		ack = BinaryProtocol.encode_ack(False, 0, "missing parameters")
+	token = msg.get('token', '')
+	
+	if not token:
+		logger.error("Missing token")
+		ack = BinaryProtocol.encode_ack(False, 0, "missing token")
 		await websocket.send_bytes(ack)
-		await websocket.close(code=1008, reason="Missing parameters")
+		await websocket.close(code=1008, reason="Missing token")
 		return
 
-	if not await async_db.check_user(user, psw):
-		logger.error("Invalid user credentials")
-		ack = BinaryProtocol.encode_ack(False, 0, "invalid user")
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		logger.error("Invalid token")
+		ack = BinaryProtocol.encode_ack(False, 0, "invalid token")
 		await websocket.send_bytes(ack)
-		await websocket.close(code=1008, reason="Invalid user")
+		await websocket.close(code=1008, reason="Invalid token")
+		return
+	
+	user = payload.get("sub", "")
+	roomid = payload.get("roomid", "")
+
+	if not (user and roomid):
+		logger.error("Token missing user or room")
+		ack = BinaryProtocol.encode_ack(False, 0, "invalid token data")
+		await websocket.send_bytes(ack)
+		await websocket.close(code=1008, reason="Invalid token data")
 		return
 
 	if not is_valid_roomid(roomid):
@@ -347,13 +356,6 @@ async def websocket_endpoint(websocket: WebSocket):
 		ack = BinaryProtocol.encode_ack(False, 0, "invalid room format")
 		await websocket.send_bytes(ack)
 		await websocket.close(code=1008, reason="Invalid room format")
-		return
-
-	if not await async_db.check_room(roomid, roompsw):
-		logger.error("Invalid room credentials")
-		ack = BinaryProtocol.encode_ack(False, 0, "invalid room")
-		await websocket.send_bytes(ack)
-		await websocket.close(code=1008, reason="Invalid room")
 		return
 
 	ack = BinaryProtocol.encode_ack(True, 0)
@@ -397,7 +399,25 @@ async def login_user(request: Request):
 	user = str(data.get("user", ""))
 	psw = str(data.get("psw", ""))
 	logger.info(f"login_user: {user}")
-	return {"status": await async_db.check_user(user, psw)}
+	if not await async_db.check_user(user, psw):
+		return {"status": False}
+	access_token = jwt_auth.create_access_token(user)
+	refresh_token = jwt_auth.create_refresh_token(user)
+	return {"status": True, "access_token": access_token, "refresh_token": refresh_token, "user": user}
+
+@app.post('/refresh_token')
+async def refresh_token(request: Request):
+	client_ip = request.client.host if request.client else "unknown"
+	if not rate_limiter.is_allowed(f"login:{client_ip}"):
+		return {"status": False, "error": "Rate limited"}
+	data = await request.json()
+	refresh_token = str(data.get("refresh_token", ""))
+	roomid = str(data.get("roomid", "") or "")
+	logger.info(f"refresh_token: roomid={roomid}")
+	result = jwt_auth.refresh_access_token(refresh_token, roomid if roomid else None)
+	if not result:
+		return {"status": False, "error": "Invalid refresh token"}
+	return {"status": True, "access_token": result["access_token"], "user": result["user"]}
 
 @app.post('/login_room')
 async def login_room(request: Request):
@@ -407,18 +427,28 @@ async def login_room(request: Request):
 	data = await request.json()
 	room = str(data.get("room", ""))
 	psw = str(data.get("psw", ""))
+	user_token = str(data.get("token", ""))
 	logger.info(f"login_room: {room}")
-	return {"status": await async_db.check_room(room, psw)}
+	user = jwt_auth.get_user_from_token(user_token)
+	if not user:
+		return {"status": False, "error": "Invalid user token"}
+	if not await async_db.check_room(room, psw):
+		return {"status": False}
+	access_token = jwt_auth.create_access_token(user, room)
+	return {"status": True, "access_token": access_token}
 
 @app.post('/get_current_url')
 async def get_current_url(request: Request):
 	data = await request.json()
-	room = str(data.get("room", "") or "")
-	roompsw = str(data.get("roompsw", "") or "")
-	if not (room and roompsw):
-		return {"status": False, "error": "Missing parameters"}
-	if not await async_db.check_room(room, roompsw):
-		return {"status": False, "error": "Invalid room"}
+	token = str(data.get("token", "") or "")
+	if not token:
+		return {"status": False, "error": "Missing token"}
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		return {"status": False, "error": "Invalid token"}
+	room = payload.get("roomid")
+	if not room:
+		return {"status": False, "error": "Token missing room"}
 	r = room_manager.get_room(room)
 	url = r.state.url if r else ""
 	return {"status": True, "url": url}
@@ -426,20 +456,23 @@ async def get_current_url(request: Request):
 @app.post('/setvideourl_offline')
 async def setvideourl_offline(request: Request):
 	data = await request.json()
-	user = str(data.get("user", "") or "")
-	userpsw = str(data.get("psw", "") or "")
-	roomid = str(data.get("room", "") or "")
-	roompsw = str(data.get("roompsw", "") or data.get("room_psw", "") or "")
+	token = str(data.get("token", "") or "")
 	new_url = str(data.get("new_url", "") or "")
+	
+	if not token:
+		return {"status": False, "error": "Missing token"}
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		return {"status": False, "error": "Invalid token"}
+	user = payload.get("sub")
+	roomid = payload.get("roomid")
+	if not (user and roomid):
+		return {"status": False, "error": "Token missing user or room"}
 	
 	logger.info(f"setvideourl_offline: {user}@{roomid} url={new_url}")
 	
-	if not (user and userpsw and roomid and roompsw and new_url):
-		return {"status": False, "error": "Missing required parameters"}
-	if not await async_db.check_user(user, userpsw):
-		return {"status": False, "error": "Invalid user credentials"}
-	if not await async_db.check_room(roomid, roompsw):
-		return {"status": False, "error": "Invalid room credentials"}
+	if not new_url:
+		return {"status": False, "error": "Missing URL"}
 	
 	url_valid = check_url(new_url)
 	if not url_valid:
@@ -469,19 +502,19 @@ async def setvideourl_offline(request: Request):
 @app.post('/subtitle/upload')
 async def upload_subtitle(request: Request):
 	data = await request.json()
-	user = str(data.get("user", "") or "")
-	userpsw = str(data.get("psw", "") or "")
-	roomid = str(data.get("room", "") or "")
-	roompsw = str(data.get("roompsw", "") or "")
+	token = str(data.get("token", "") or "")
 	subtitle_data = str(data.get("subtitle_data", "") or "")
 	filename = str(data.get("filename", "subtitle.vtt") or "subtitle.vtt")
 
-	if not (user and userpsw and roomid and roompsw and subtitle_data):
+	if not token:
+		return {"status": False, "error": "Missing token"}
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		return {"status": False, "error": "Invalid token"}
+	user = payload.get("sub")
+	roomid = payload.get("roomid")
+	if not (user and roomid and subtitle_data):
 		return {"status": False, "error": "Missing parameters"}
-	if not await async_db.check_user(user, userpsw):
-		return {"status": False, "error": "Invalid user"}
-	if not await async_db.check_room(roomid, roompsw):
-		return {"status": False, "error": "Invalid room"}
 
 	if save_subtitle(roomid, subtitle_data, filename):
 		room = room_manager.get_room(roomid)
@@ -495,13 +528,16 @@ async def upload_subtitle(request: Request):
 @app.post('/subtitle/download')
 async def download_subtitle(request: Request):
 	data = await request.json()
-	roomid = str(data.get("room", "") or "")
-	roompsw = str(data.get("roompsw", "") or "")
+	token = str(data.get("token", "") or "")
 
-	if not (roomid and roompsw):
-		return {"status": False, "error": "Missing parameters"}
-	if not await async_db.check_room(roomid, roompsw):
-		return {"status": False, "error": "Invalid room"}
+	if not token:
+		return {"status": False, "error": "Missing token"}
+	payload = jwt_auth.verify_token(token)
+	if not payload:
+		return {"status": False, "error": "Invalid token"}
+	roomid = payload.get("roomid")
+	if not roomid:
+		return {"status": False, "error": "Token missing room"}
 
 	subtitle_data = load_subtitle(roomid)
 	if subtitle_data:

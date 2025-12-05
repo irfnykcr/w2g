@@ -93,24 +93,15 @@ class VideoSyncClient {
         return buf
     }
 
-    encodeAuth(user, userPsw, roomId, roomPsw) {
-        const userBuf = Buffer.from(user.slice(0, MAX_CRED_LENGTH), 'utf8')
-        const pswBuf = Buffer.from(userPsw.slice(0, MAX_CRED_LENGTH), 'utf8')
-        const roomBuf = Buffer.from(roomId.slice(0, MAX_CRED_LENGTH), 'utf8')
-        const roomPswBuf = Buffer.from(roomPsw.slice(0, MAX_CRED_LENGTH), 'utf8')
-        // AUTH: 1B op, 1B userLen, nB user, 1B pswLen, nB psw, 1B roomLen, nB room, 1B roomPswLen, nB roomPsw
-        const totalLen = 1 + 1 + userBuf.length + 1 + pswBuf.length + 1 + roomBuf.length + 1 + roomPswBuf.length
+    encodeAuth(token) {
+        const tokenBuf = Buffer.from(token.slice(0, 2048), 'utf8')
+        const totalLen = 1 + 2 + tokenBuf.length
         const buf = Buffer.alloc(totalLen)
         let offset = 0
         buf.writeUInt8(OP.AUTH, offset++)
-        buf.writeUInt8(userBuf.length, offset++)
-        userBuf.copy(buf, offset); offset += userBuf.length
-        buf.writeUInt8(pswBuf.length, offset++)
-        pswBuf.copy(buf, offset); offset += pswBuf.length
-        buf.writeUInt8(roomBuf.length, offset++)
-        roomBuf.copy(buf, offset); offset += roomBuf.length
-        buf.writeUInt8(roomPswBuf.length, offset++)
-        roomPswBuf.copy(buf, offset)
+        buf.writeUInt16BE(tokenBuf.length, offset)
+        offset += 2
+        tokenBuf.copy(buf, offset)
         return buf
     }
 
@@ -200,7 +191,7 @@ class VideoSyncClient {
         }
     }
 
-    async connect(serverEndpoint, user, userPsw, roomId, roomPsw) {
+    async connect(serverEndpoint, token) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             return true
         }
@@ -225,7 +216,7 @@ class VideoSyncClient {
 
                 this.ws.on('open', () => {
                     this.logger.info('VideoSync WebSocket connected, sending auth...')
-                    const authMsg = this.encodeAuth(user, userPsw, roomId, roomPsw)
+                    const authMsg = this.encodeAuth(token)
                     this.ws.send(authMsg)
                 })
 

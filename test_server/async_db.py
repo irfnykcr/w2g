@@ -93,6 +93,22 @@ async def check_room_get_name(roomid: str, roompsw: str):
 		logger.error(f"check_room_get_name error: {e}")
 		return False
 
+async def get_room_name(roomid: str):
+	if not roomid:
+		return None
+	try:
+		p = await get_pool()
+		async with p.acquire() as conn:
+			async with conn.cursor() as cursor:
+				await cursor.execute("SELECT name FROM rooms WHERE roomid = %s", (roomid,))
+				result = await cursor.fetchone()
+				if result:
+					return result[0]
+		return None
+	except Exception as e:
+		logger.error(f"get_room_name error: {e}")
+		return None
+
 async def get_user_image(username: str) -> str:
 	if not username:
 		return ""

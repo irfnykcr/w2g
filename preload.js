@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 	setUserCreds: (user, userpsw) => ipcRenderer.invoke('set-usercreds', user, userpsw),
 	setRoomCreds: (roomid, roompsw) => ipcRenderer.invoke('set-roomcreds', roomid, roompsw),
+	refreshRoomToken: () => ipcRenderer.invoke('refresh-room-token'),
 	showInputDialog: (message) => ipcRenderer.invoke('show-input-dialog', message),
 	getUser: () => ipcRenderer.invoke('get-user'),
 	logoutUser: () => ipcRenderer.invoke('logout-user'),
